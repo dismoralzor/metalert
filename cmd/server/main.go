@@ -4,6 +4,8 @@ import (
 	"log"
 	"net/http"
 
+	"github.com/go-chi/chi/v5"
+
 	"github.com/dismoralzor/metalert/internal/handler"
 	"github.com/dismoralzor/metalert/internal/repository"
 )
@@ -11,11 +13,15 @@ import (
 func main() {
 	storage := repository.NewMemStorage()
 	updateHandler := handler.NewUpdateHandler(storage)
+	valueHandler := handler.NewValueHandler(storage)
+	indexHandler := handler.NewIndexHandler(storage)
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("POST /update/{type}/{name}/{value}", updateHandler.Update)
+	r := chi.NewRouter()
+	r.Post("/update/{type}/{name}/{value}", updateHandler.Update)
+	r.Get("/value/{type}/{name}", valueHandler.Value)
+	r.Get("/", indexHandler.Index)
 
-	if err := http.ListenAndServe("localhost:8080", mux); err != nil {
+	if err := http.ListenAndServe("localhost:8080", r); err != nil {
 		log.Fatal(err)
 	}
 }

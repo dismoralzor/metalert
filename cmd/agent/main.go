@@ -20,9 +20,7 @@ const (
 	serverAddress  = "http://localhost:8080"
 )
 
-// agent хранит собранные метрики между poll- и report-тикерами.
-// Poll пишет, Report читает - оба работают в отдельных горутинах,
-// поэтому доступ к полям защищён мьютексом.
+// poll и report работают в разных горутинах, поэтому доступ к полям под мьютексом.
 type agent struct {
 	mu        sync.Mutex
 	gauges    map[string]float64
@@ -33,7 +31,6 @@ func newAgent() *agent {
 	return &agent{gauges: make(map[string]float64)}
 }
 
-// poll снимает runtime.MemStats и добавляет свои метрики (RandomValue, PollCount).
 func (a *agent) poll() {
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
@@ -68,16 +65,13 @@ func (a *agent) poll() {
 	a.gauges["StackSys"] = float64(m.StackSys)
 	a.gauges["Sys"] = float64(m.Sys)
 	a.gauges["TotalAlloc"] = float64(m.TotalAlloc)
-	// math/rand с Go 1.20+ сам сеется случайно при старте программы,
-	// явный rand.Seed не нужен.
+	// math/rand с Go 1.20+ сеется случайно сам, явный Seed не нужен.
 	a.gauges["RandomValue"] = rand.Float64()
 
 	a.pollCount++
 }
 
-// report отправляет накопленные метрики на сервер и сбрасывает pollCount.
-// Снимок под мьютексом делаем отдельно от самой отправки по сети, чтобы
-// не держать блокировку (и не тормозить poll) на время HTTP-запросов.
+// Снимок под мьютексом отдельно от самой отправки - не держать лок на время HTTP-запросов.
 func (a *agent) report(client *http.Client) {
 	a.mu.Lock()
 	gaugesSnapshot := make(map[string]float64, len(a.gauges))
@@ -89,11 +83,10 @@ func (a *agent) report(client *http.Client) {
 		sendMetric(client, models.Gauge, name, strconv.FormatFloat(value, 'f', -1, 64))
 	}
 
-	// PollCount на сервере - накопительный counter (UpdateCounter делает +=),
-	// поэтому шлём не общий счётчик с начала работы агента, а "прирост" с прошлой
-	// отправки. Вычитаем снятый снимок из pollCount только после того, как сервер
-	// подтвердил приём (sendMetric не вернула ошибку) - если POST не дойдёт,
-	// прирост останется накопленным и уйдёт со следующей отправкой, а не потеряется.
+	// Сервер накапливает counter через += (UpdateCounter), поэтому шлём прирост
+	// с прошлой отправки, а не общий счётчик с начала работы агента. Вычитаем
+	// его из pollCount только после подтверждённой отправки - если POST не дойдёт,
+	// прирост останется в pollCount и уйдёт со следующим отчётом, а не потеряется.
 	if sendMetric(client, models.Counter, "PollCount", strconv.FormatInt(pollCount, 10)) {
 		a.mu.Lock()
 		a.pollCount -= pollCount
@@ -101,7 +94,6 @@ func (a *agent) report(client *http.Client) {
 	}
 }
 
-// sendMetric возвращает true, если сервер принял метрику (запрос отправлен и получен ответ).
 func sendMetric(client *http.Client, metricType, name, value string) bool {
 	url := fmt.Sprintf("%s/update/%s/%s/%s", serverAddress, metricType, name, value)
 
@@ -133,7 +125,5 @@ func main() {
 		}
 	}()
 
-	// Тикеры живут в своих горутинах и работают вечно, main просто не должен
-	// завершиться раньше них - пустой select{} блокируется навсегда.
 	select {}
 }

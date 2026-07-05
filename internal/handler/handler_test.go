@@ -52,11 +52,11 @@ func TestUpdateHandler_Update(t *testing.T) {
 			h := NewUpdateHandler(storage)
 
 			req := httptest.NewRequest(http.MethodPost, "/update/"+tt.metricType+"/"+tt.metricName+"/"+tt.value, nil)
-			// SetPathValue имитирует то, что при реальном запросе делает http.ServeMux
-			// при сопоставлении с паттерном "{type}/{name}/{value}".
-			req.SetPathValue("type", tt.metricType)
-			req.SetPathValue("name", tt.metricName)
-			req.SetPathValue("value", tt.value)
+			req = withChiURLParams(req, map[string]string{
+				"type":  tt.metricType,
+				"name":  tt.metricName,
+				"value": tt.value,
+			})
 
 			w := httptest.NewRecorder()
 			h.Update(w, req)

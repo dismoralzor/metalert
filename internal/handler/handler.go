@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/go-chi/chi/v5"
+
 	"github.com/dismoralzor/metalert/internal/model"
 	"github.com/dismoralzor/metalert/internal/repository"
 )
@@ -19,9 +21,9 @@ func NewUpdateHandler(storage repository.Storage) *UpdateHandler {
 }
 
 func (h *UpdateHandler) Update(w http.ResponseWriter, r *http.Request) {
-	metricType := r.PathValue("type")
-	metricName := r.PathValue("name")
-	rawValue := r.PathValue("value")
+	metricType := chi.URLParam(r, "type")
+	metricName := chi.URLParam(r, "name")
+	rawValue := chi.URLParam(r, "value")
 
 	// Сначала проверяем имя: по спецификации отсутствие имени - это отдельный
 	// случай (404), который не должен смешиваться с "кривой тип/значение" (400).
