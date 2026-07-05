@@ -11,6 +11,8 @@ import (
 )
 
 func main() {
+	cfg := parseFlags()
+
 	storage := repository.NewMemStorage()
 	updateHandler := handler.NewUpdateHandler(storage)
 	valueHandler := handler.NewValueHandler(storage)
@@ -21,7 +23,7 @@ func main() {
 	r.Get("/value/{type}/{name}", valueHandler.Value)
 	r.Get("/", indexHandler.Index)
 
-	if err := http.ListenAndServe("localhost:8080", r); err != nil {
+	if err := http.ListenAndServe(cfg.addr, r); err != nil {
 		log.Fatal(err)
 	}
 }

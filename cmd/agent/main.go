@@ -14,12 +14,6 @@ import (
 	"github.com/dismoralzor/metalert/internal/model"
 )
 
-const (
-	pollInterval   = 2 * time.Second
-	reportInterval = 10 * time.Second
-	serverAddress  = "http://localhost:8080"
-)
-
 // poll и report работают в разных горутинах, поэтому доступ к полям под мьютексом.
 type agent struct {
 	mu        sync.Mutex
@@ -72,7 +66,7 @@ func (a *agent) poll() {
 }
 
 // Снимок под мьютексом отдельно от самой отправки - не держать лок на время HTTP-запросов.
-func (a *agent) report(client *http.Client) {
+func (a *agent) report(client *http.Client, addr string) {
 	a.mu.Lock()
 	gaugesSnapshot := make(map[string]float64, len(a.gauges))
 	maps.Copy(gaugesSnapshot, a.gauges)
@@ -80,22 +74,22 @@ func (a *agent) report(client *http.Client) {
 	a.mu.Unlock()
 
 	for name, value := range gaugesSnapshot {
-		sendMetric(client, models.Gauge, name, strconv.FormatFloat(value, 'f', -1, 64))
+		sendMetric(client, addr, models.Gauge, name, strconv.FormatFloat(value, 'f', -1, 64))
 	}
 
 	// Сервер накапливает counter через += (UpdateCounter), поэтому шлём прирост
 	// с прошлой отправки, а не общий счётчик с начала работы агента. Вычитаем
 	// его из pollCount только после подтверждённой отправки - если POST не дойдёт,
 	// прирост останется в pollCount и уйдёт со следующим отчётом, а не потеряется.
-	if sendMetric(client, models.Counter, "PollCount", strconv.FormatInt(pollCount, 10)) {
+	if sendMetric(client, addr, models.Counter, "PollCount", strconv.FormatInt(pollCount, 10)) {
 		a.mu.Lock()
 		a.pollCount -= pollCount
 		a.mu.Unlock()
 	}
 }
 
-func sendMetric(client *http.Client, metricType, name, value string) bool {
-	url := fmt.Sprintf("%s/update/%s/%s/%s", serverAddress, metricType, name, value)
+func sendMetric(client *http.Client, addr, metricType, name, value string) bool {
+	url := fmt.Sprintf("http://%s/update/%s/%s/%s", addr, metricType, name, value)
 
 	resp, err := client.Post(url, "text/plain", nil)
 	if err != nil {
@@ -107,11 +101,13 @@ func sendMetric(client *http.Client, metricType, name, value string) bool {
 }
 
 func main() {
+	cfg := parseFlags()
+
 	a := newAgent()
 	client := &http.Client{Timeout: 5 * time.Second}
 
-	pollTicker := time.NewTicker(pollInterval)
-	reportTicker := time.NewTicker(reportInterval)
+	pollTicker := time.NewTicker(cfg.pollInterval)
+	reportTicker := time.NewTicker(cfg.reportInterval)
 
 	go func() {
 		for range pollTicker.C {
@@ -121,7 +117,7 @@ func main() {
 
 	go func() {
 		for range reportTicker.C {
-			a.report(client)
+			a.report(client, cfg.addr)
 		}
 	}()
 
