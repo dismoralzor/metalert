@@ -1,14 +1,18 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"maps"
 	"math/rand"
 	"net/http"
+	"os"
+	"os/signal"
 	"runtime"
 	"strconv"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/dismoralzor/metalert/internal/model"
@@ -103,23 +107,55 @@ func sendMetric(client *http.Client, addr, metricType, name, value string) bool 
 func main() {
 	cfg := parseFlags()
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// SIGTERM - обычный сигнал от docker stop / systemd, SIGINT - Ctrl+C.
+	// Один cancel() на оба - обеим горутинам ниже всё равно, каким сигналом их остановили.
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-sigCh
+		cancel()
+	}()
+
 	a := newAgent()
 	client := &http.Client{Timeout: 5 * time.Second}
 
 	pollTicker := time.NewTicker(cfg.pollInterval)
+	defer pollTicker.Stop()
 	reportTicker := time.NewTicker(cfg.reportInterval)
+	defer reportTicker.Stop()
+
+	var wg sync.WaitGroup
+	wg.Add(2)
 
 	go func() {
-		for range pollTicker.C {
-			a.poll()
+		defer wg.Done()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-pollTicker.C:
+				a.poll()
+			}
 		}
 	}()
 
 	go func() {
-		for range reportTicker.C {
-			a.report(client, cfg.addr)
+		defer wg.Done()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-reportTicker.C:
+				a.report(client, cfg.addr)
+			}
 		}
 	}()
 
-	select {}
+	// Ждём сигнала, а затем - пока обе горутины реально завершатся
+	// (а не просто "получили сигнал и продолжают тикать где-то в фоне").
+	<-ctx.Done()
+	wg.Wait()
 }
