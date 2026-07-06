@@ -5,6 +5,7 @@ import (
 	"html/template"
 	"net/http"
 
+	"github.com/dismoralzor/metalert/internal/model"
 	"github.com/dismoralzor/metalert/internal/repository"
 )
 
@@ -16,11 +17,11 @@ const indexTemplateSrc = `<!DOCTYPE html>
 <h1>Metrics</h1>
 <h2>Gauges</h2>
 <ul>
-{{range $name, $value := .Gauges}}<li>{{$name}}: {{$value}}</li>
+{{range .Gauges}}<li>{{.Name}}: {{.Value}}</li>
 {{end}}</ul>
 <h2>Counters</h2>
 <ul>
-{{range $name, $value := .Counters}}<li>{{$name}}: {{$value}}</li>
+{{range .Counters}}<li>{{.Name}}: {{.Value}}</li>
 {{end}}</ul>
 </body>
 </html>`
@@ -38,12 +39,20 @@ func NewIndexHandler(storage repository.Storage) *IndexHandler {
 }
 
 func (h *IndexHandler) Index(w http.ResponseWriter, r *http.Request) {
-	data := struct {
-		Gauges   map[string]float64
-		Counters map[string]int64
-	}{
-		Gauges:   h.storage.Gauges(),
-		Counters: h.storage.Counters(),
+	// Metrics() отдаёт единый список без разделения по типу - делим его тут,
+	// а не в Storage, потому что это забота презентации (две секции на странице),
+	// а не хранилища.
+	var data struct {
+		Gauges   []repository.Metric
+		Counters []repository.Metric
+	}
+	for _, metric := range h.storage.Metrics() {
+		switch metric.Type {
+		case models.Gauge:
+			data.Gauges = append(data.Gauges, metric)
+		case models.Counter:
+			data.Counters = append(data.Counters, metric)
+		}
 	}
 
 	// Рендерим в буфер: если Execute упадёт на середине шаблона, w ещё не увидит

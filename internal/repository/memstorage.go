@@ -1,8 +1,10 @@
 package repository
 
 import (
-	"maps"
+	"strconv"
 	"sync"
+
+	"github.com/dismoralzor/metalert/internal/model"
 )
 
 // Мьютекс нужен, т.к. конкурентная запись в map без синхронизации паникует.
@@ -47,20 +49,27 @@ func (m *MemStorage) GetCounter(name string) (int64, bool) {
 	return value, ok
 }
 
-// Возвращает копию, а не m.gauges напрямую - иначе вызывающий код читал бы
-// map без мьютекса, и конкурентная запись рядом привела бы к panic.
-func (m *MemStorage) Gauges() map[string]float64 {
+// Metrics строит DTO под мьютексом, а не отдаёт вызывающему коду доступ
+// к m.gauges/m.counters напрямую - иначе чтение без мьютекса и конкурентная
+// запись рядом привели бы к panic.
+func (m *MemStorage) Metrics() []Metric {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	result := make(map[string]float64, len(m.gauges))
-	maps.Copy(result, m.gauges)
-	return result
-}
 
-func (m *MemStorage) Counters() map[string]int64 {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	result := make(map[string]int64, len(m.counters))
-	maps.Copy(result, m.counters)
+	result := make([]Metric, 0, len(m.gauges)+len(m.counters))
+	for name, value := range m.gauges {
+		result = append(result, Metric{
+			Name:  name,
+			Type:  models.Gauge,
+			Value: strconv.FormatFloat(value, 'f', -1, 64),
+		})
+	}
+	for name, value := range m.counters {
+		result = append(result, Metric{
+			Name:  name,
+			Type:  models.Counter,
+			Value: strconv.FormatInt(value, 10),
+		})
+	}
 	return result
 }
