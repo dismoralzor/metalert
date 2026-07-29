@@ -34,8 +34,12 @@ func main() {
 	r.Use(logger.RequestLogger)
 	r.Post("/update/{type}/{name}/{value}", updateHandler.Update)
 	r.Get("/value/{type}/{name}", valueHandler.Value)
+	// Спецификация описывает JSON-эндпоинты со слешем на конце, но chi считает
+	// "/update" и "/update/" разными путями - регистрируем оба варианта.
 	r.Post("/update", updateJSONHandler.Update)
+	r.Post("/update/", updateJSONHandler.Update)
 	r.Post("/value", valueJSONHandler.Value)
+	r.Post("/value/", valueJSONHandler.Value)
 	r.Get("/", indexHandler.Index)
 
 	logger.Log.Info("starting server", zap.String("addr", cfg.addr))

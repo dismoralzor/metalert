@@ -111,7 +111,7 @@ func sendMetric(client *http.Client, addr string, m models.Metrics) bool {
 		return false
 	}
 
-	url := fmt.Sprintf("http://%s/update", addr)
+	url := fmt.Sprintf("http://%s/update/", addr)
 	resp, err := client.Post(url, "application/json", bytes.NewReader(body))
 	if err != nil {
 		log.Printf("send %s %s: %v", m.MType, m.ID, err)
