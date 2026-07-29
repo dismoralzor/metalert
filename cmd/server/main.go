@@ -25,6 +25,8 @@ func main() {
 	updateHandler := handler.NewUpdateHandler(storage)
 	valueHandler := handler.NewValueHandler(storage)
 	indexHandler := handler.NewIndexHandler(storage)
+	updateJSONHandler := handler.NewUpdateJSONHandler(storage)
+	valueJSONHandler := handler.NewValueJSONHandler(storage)
 
 	r := chi.NewRouter()
 	// Use до регистрации роутов: chi паникует, если middleware добавляют
@@ -32,6 +34,8 @@ func main() {
 	r.Use(logger.RequestLogger)
 	r.Post("/update/{type}/{name}/{value}", updateHandler.Update)
 	r.Get("/value/{type}/{name}", valueHandler.Value)
+	r.Post("/update", updateJSONHandler.Update)
+	r.Post("/value", valueJSONHandler.Value)
 	r.Get("/", indexHandler.Index)
 
 	logger.Log.Info("starting server", zap.String("addr", cfg.addr))

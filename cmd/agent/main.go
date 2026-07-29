@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"maps"
@@ -10,7 +12,6 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
-	"strconv"
 	"sync"
 	"syscall"
 	"time"
@@ -78,26 +79,42 @@ func (a *agent) report(client *http.Client, addr string) {
 	a.mu.Unlock()
 
 	for name, value := range gaugesSnapshot {
-		sendMetric(client, addr, models.Gauge, name, strconv.FormatFloat(value, 'f', -1, 64))
+		v := value
+		sendMetric(client, addr, models.Metrics{
+			ID:    name,
+			MType: models.Gauge,
+			Value: &v,
+		})
 	}
 
 	// Сервер накапливает counter через += (UpdateCounter), поэтому шлём прирост
 	// с прошлой отправки, а не общий счётчик с начала работы агента. Вычитаем
 	// его из pollCount только после подтверждённой отправки - если POST не дойдёт,
 	// прирост останется в pollCount и уйдёт со следующим отчётом, а не потеряется.
-	if sendMetric(client, addr, models.Counter, "PollCount", strconv.FormatInt(pollCount, 10)) {
+	delta := pollCount
+	if sendMetric(client, addr, models.Metrics{
+		ID:    "PollCount",
+		MType: models.Counter,
+		Delta: &delta,
+	}) {
 		a.mu.Lock()
 		a.pollCount -= pollCount
 		a.mu.Unlock()
 	}
 }
 
-func sendMetric(client *http.Client, addr, metricType, name, value string) bool {
-	url := fmt.Sprintf("http://%s/update/%s/%s/%s", addr, metricType, name, value)
-
-	resp, err := client.Post(url, "text/plain", nil)
+// sendMetric отправляет одну метрику JSON-ом на POST /update.
+func sendMetric(client *http.Client, addr string, m models.Metrics) bool {
+	body, err := json.Marshal(m)
 	if err != nil {
-		log.Printf("send %s %s: %v", metricType, name, err)
+		log.Printf("marshal %s %s: %v", m.MType, m.ID, err)
+		return false
+	}
+
+	url := fmt.Sprintf("http://%s/update", addr)
+	resp, err := client.Post(url, "application/json", bytes.NewReader(body))
+	if err != nil {
+		log.Printf("send %s %s: %v", m.MType, m.ID, err)
 		return false
 	}
 	defer resp.Body.Close()
