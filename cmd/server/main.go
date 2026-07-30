@@ -31,7 +31,9 @@ func main() {
 	r := chi.NewRouter()
 	// Use до регистрации роутов: chi паникует, если middleware добавляют
 	// к роутеру, в котором уже объявлены маршруты.
+	// Логгер снаружи gzip: в лог попадает размер тела, реально ушедшего в сеть.
 	r.Use(logger.RequestLogger)
+	r.Use(handler.GzipMiddleware)
 	r.Post("/update/{type}/{name}/{value}", updateHandler.Update)
 	r.Get("/value/{type}/{name}", valueHandler.Value)
 	// Спецификация описывает JSON-эндпоинты со слешем на конце, но chi считает

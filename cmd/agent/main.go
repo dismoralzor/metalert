@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -103,7 +104,7 @@ func (a *agent) report(client *http.Client, addr string) {
 	}
 }
 
-// sendMetric отправляет одну метрику JSON-ом на POST /update.
+// sendMetric отправляет одну метрику JSON-ом, сжатым gzip, на POST /update/.
 func sendMetric(client *http.Client, addr string, m models.Metrics) bool {
 	body, err := json.Marshal(m)
 	if err != nil {
@@ -111,8 +112,29 @@ func sendMetric(client *http.Client, addr string, m models.Metrics) bool {
 		return false
 	}
 
+	var compressed bytes.Buffer
+	zw := gzip.NewWriter(&compressed)
+	if _, err := zw.Write(body); err != nil {
+		log.Printf("compress %s %s: %v", m.MType, m.ID, err)
+		return false
+	}
+	// Close до отправки, а не через defer: он дописывает хвост gzip-потока,
+	// без него сервер получит обрезанные данные.
+	if err := zw.Close(); err != nil {
+		log.Printf("compress %s %s: %v", m.MType, m.ID, err)
+		return false
+	}
+
 	url := fmt.Sprintf("http://%s/update/", addr)
-	resp, err := client.Post(url, "application/json", bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, url, &compressed)
+	if err != nil {
+		log.Printf("build request %s %s: %v", m.MType, m.ID, err)
+		return false
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Encoding", "gzip")
+
+	resp, err := client.Do(req)
 	if err != nil {
 		log.Printf("send %s %s: %v", m.MType, m.ID, err)
 		return false
