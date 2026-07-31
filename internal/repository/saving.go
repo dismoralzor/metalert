@@ -30,12 +30,7 @@ func (s *SavingStorage) UpdateCounter(name string, delta int64) {
 
 // Ошибку записи логируем, но запрос не валим: метрика уже принята в память.
 func (s *SavingStorage) save() {
-	metrics, err := Snapshot(s.Storage)
-	if err != nil {
-		logger.Log.Error("snapshot for sync save", zap.Error(err))
-		return
-	}
-	if err := SaveToFile(s.path, metrics); err != nil {
+	if err := SaveToFile(s.path, Snapshot(s.Storage)); err != nil {
 		logger.Log.Error("sync save", zap.Error(err))
 	}
 }

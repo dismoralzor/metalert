@@ -1,12 +1,6 @@
 package repository
 
-// Metric - DTO для чтения списком: скрывает от вызывающего кода, что внутри
-// MemStorage gauge и counter лежат в двух разных map с разными типами значений.
-type Metric struct {
-	Name  string
-	Type  string // "gauge" или "counter" (см. models.Gauge / models.Counter)
-	Value string
-}
+import "github.com/dismoralzor/metalert/internal/model"
 
 // Storage — контракт хранилища метрик, от которого зависит handler.
 type Storage interface {
@@ -17,5 +11,7 @@ type Storage interface {
 	GetGauge(name string) (float64, bool)
 	GetCounter(name string) (int64, bool)
 
-	Metrics() []Metric
+	// Value/Delta заполнены типизированно (см. models.Metrics) - без строковой
+	// конвертации, форматирование в текст остаётся на вызывающей стороне.
+	Metrics() []models.Metrics
 }

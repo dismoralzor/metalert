@@ -1,7 +1,6 @@
 package repository
 
 import (
-	"strconv"
 	"sync"
 
 	"github.com/dismoralzor/metalert/internal/model"
@@ -52,24 +51,18 @@ func (m *MemStorage) GetCounter(name string) (int64, bool) {
 // Metrics строит DTO под мьютексом, а не отдаёт вызывающему коду доступ
 // к m.gauges/m.counters напрямую - иначе чтение без мьютекса и конкурентная
 // запись рядом привели бы к panic.
-func (m *MemStorage) Metrics() []Metric {
+func (m *MemStorage) Metrics() []models.Metrics {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	result := make([]Metric, 0, len(m.gauges)+len(m.counters))
+	result := make([]models.Metrics, 0, len(m.gauges)+len(m.counters))
 	for name, value := range m.gauges {
-		result = append(result, Metric{
-			Name:  name,
-			Type:  models.Gauge,
-			Value: strconv.FormatFloat(value, 'f', -1, 64),
-		})
+		v := value
+		result = append(result, models.Metrics{ID: name, MType: models.Gauge, Value: &v})
 	}
-	for name, value := range m.counters {
-		result = append(result, Metric{
-			Name:  name,
-			Type:  models.Counter,
-			Value: strconv.FormatInt(value, 10),
-		})
+	for name, delta := range m.counters {
+		d := delta
+		result = append(result, models.Metrics{ID: name, MType: models.Counter, Delta: &d})
 	}
 	return result
 }

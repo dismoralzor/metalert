@@ -70,11 +70,7 @@ func main() {
 	r.Get("/", indexHandler.Index)
 
 	saveNow := func() {
-		metrics, err := repository.Snapshot(storage)
-		if err != nil {
-			logger.Log.Error("snapshot metrics", zap.Error(err))
-			return
-		}
+		metrics := repository.Snapshot(storage)
 		if err := repository.SaveToFile(cfg.fileStoragePath, metrics); err != nil {
 			logger.Log.Error("save metrics", zap.Error(err))
 			return

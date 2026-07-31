@@ -4,10 +4,18 @@ import (
 	"bytes"
 	"html/template"
 	"net/http"
+	"strconv"
 
 	"github.com/dismoralzor/metalert/internal/model"
 	"github.com/dismoralzor/metalert/internal/repository"
 )
+
+// metricRow - строка HTML-таблицы: Value уже отформатирован в текст,
+// шаблону не нужно разыменовывать указатели Metrics.Value/Delta.
+type metricRow struct {
+	Name  string
+	Value string
+}
 
 // html/template, не text/template: экранирует значения при вставке в HTML.
 const indexTemplateSrc = `<!DOCTYPE html>
@@ -41,17 +49,30 @@ func NewIndexHandler(storage repository.Storage) *IndexHandler {
 func (h *IndexHandler) Index(w http.ResponseWriter, r *http.Request) {
 	// Metrics() отдаёт единый список без разделения по типу - делим его тут,
 	// а не в Storage, потому что это забота презентации (две секции на странице),
-	// а не хранилища.
+	// а не хранилища. Форматирование Value/Delta в текст - тоже забота
+	// презентации: DTO хранилища остаётся типизированным.
 	var data struct {
-		Gauges   []repository.Metric
-		Counters []repository.Metric
+		Gauges   []metricRow
+		Counters []metricRow
 	}
 	for _, metric := range h.storage.Metrics() {
-		switch metric.Type {
+		switch metric.MType {
 		case models.Gauge:
-			data.Gauges = append(data.Gauges, metric)
+			if metric.Value == nil {
+				continue
+			}
+			data.Gauges = append(data.Gauges, metricRow{
+				Name:  metric.ID,
+				Value: strconv.FormatFloat(*metric.Value, 'f', -1, 64),
+			})
 		case models.Counter:
-			data.Counters = append(data.Counters, metric)
+			if metric.Delta == nil {
+				continue
+			}
+			data.Counters = append(data.Counters, metricRow{
+				Name:  metric.ID,
+				Value: strconv.FormatInt(*metric.Delta, 10),
+			})
 		}
 	}
 

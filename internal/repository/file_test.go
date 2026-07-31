@@ -72,8 +72,7 @@ func TestLoadFromFile_Empty(t *testing.T) {
 }
 
 // Полный путь состояния: хранилище -> файл -> новое хранилище.
-// Значения gauge подобраны так, чтобы поймать потерю точности при
-// сериализации float через строку в Metric.Value.
+// Значения gauge подобраны так, чтобы поймать потерю точности при JSON-сериализации.
 func TestSnapshotSaveLoadRestore(t *testing.T) {
 	gauges := map[string]float64{
 		"Simple":   23.5,
@@ -91,10 +90,7 @@ func TestSnapshotSaveLoadRestore(t *testing.T) {
 	}
 	src.UpdateCounter("PollCount", 42)
 
-	snapshot, err := Snapshot(src)
-	if err != nil {
-		t.Fatalf("Snapshot: %v", err)
-	}
+	snapshot := Snapshot(src)
 
 	path := filepath.Join(t.TempDir(), "metrics.json")
 	if err := SaveToFile(path, snapshot); err != nil {

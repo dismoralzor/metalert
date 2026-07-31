@@ -39,15 +39,17 @@ func TestMemStorage_Metrics(t *testing.T) {
 	}
 
 	// Порядок из map рандомизирован, поэтому индексируем по имени перед проверкой.
-	byName := make(map[string]Metric, len(got))
+	byName := make(map[string]models.Metrics, len(got))
 	for _, metric := range got {
-		byName[metric.Name] = metric
+		byName[metric.ID] = metric
 	}
 
-	if gauge := byName["temperature"]; gauge.Type != models.Gauge || gauge.Value != "23.5" {
-		t.Errorf("temperature = %+v, want {Type: gauge, Value: 23.5}", gauge)
+	gauge := byName["temperature"]
+	if gauge.MType != models.Gauge || gauge.Value == nil || *gauge.Value != 23.5 {
+		t.Errorf("temperature = %+v, want {MType: gauge, Value: 23.5}", gauge)
 	}
-	if counter := byName["requests"]; counter.Type != models.Counter || counter.Value != "10" {
-		t.Errorf("requests = %+v, want {Type: counter, Value: 10}", counter)
+	counter := byName["requests"]
+	if counter.MType != models.Counter || counter.Delta == nil || *counter.Delta != 10 {
+		t.Errorf("requests = %+v, want {MType: counter, Delta: 10}", counter)
 	}
 }
