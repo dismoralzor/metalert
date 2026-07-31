@@ -22,7 +22,7 @@ func parseFlags() config {
 	level := flag.String("l", "info", "уровень логирования")
 	storeInterval := flag.Int("i", 300, "интервал сохранения в файл, сек (0 - синхронно)")
 	fileStoragePath := flag.String("f", "metrics.json", "путь к файлу с метриками")
-	restore := flag.Bool("r", true, "загружать метрики из файла при старте")
+	restoreFlag := flag.Bool("r", true, "загружать метрики из файла при старте")
 	flag.Parse()
 
 	cfg := config{
@@ -30,7 +30,7 @@ func parseFlags() config {
 		logLevel:        *level,
 		storeInterval:   time.Duration(*storeInterval) * time.Second,
 		fileStoragePath: *fileStoragePath,
-		restore:         *restore,
+		restore:         *restoreFlag,
 	}
 
 	// Приоритет env > флаг > дефолт: флаги уже разобраны (в них дефолты),
@@ -54,11 +54,11 @@ func parseFlags() config {
 		}
 	}
 	if raw := os.Getenv("RESTORE"); raw != "" {
-		restore, err := strconv.ParseBool(raw)
+		parsed, err := strconv.ParseBool(raw)
 		if err != nil {
 			log.Printf("invalid RESTORE=%q, using flag value: %v", raw, err)
 		} else {
-			cfg.restore = restore
+			cfg.restore = parsed
 		}
 	}
 
