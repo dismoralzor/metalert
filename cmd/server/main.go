@@ -43,24 +43,7 @@ func main() {
 		}
 	}
 
-	var storage repository.Storage = repository.NewMemStorage()
-
-	if cfg.restore {
-		metrics, err := repository.LoadFromFile(cfg.fileStoragePath)
-		if err != nil {
-			// Битый файл не должен мешать старту - поднимаемся с пустым хранилищем.
-			logger.Log.Error("restore metrics", zap.Error(err))
-		} else {
-			repository.Restore(storage, metrics)
-			logger.Log.Info("metrics restored", zap.Int("count", len(metrics)))
-		}
-	}
-
-	// Оборачиваем ПОСЛЕ восстановления: иначе Restore сам вызвал бы запись в файл
-	// на каждую залитую метрику.
-	if cfg.storeInterval == 0 {
-		storage = repository.NewSavingStorage(storage, cfg.fileStoragePath)
-	}
+	storage, fileMode := selectStorage(cfg, db)
 
 	updateHandler := handler.NewUpdateHandler(storage)
 	valueHandler := handler.NewValueHandler(storage)
@@ -99,8 +82,10 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// Тикер сохранения имеет смысл только в файловом режиме - БД сама персистентна,
+	// а SavingStorage (storeInterval == 0) уже пишет синхронно на каждое обновление.
 	var wg sync.WaitGroup
-	if cfg.storeInterval > 0 {
+	if fileMode && cfg.storeInterval > 0 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -141,5 +126,45 @@ func main() {
 	// Сначала дожидаемся остановки тикера, чтобы он не писал файл параллельно
 	// с финальным сохранением.
 	wg.Wait()
-	saveNow()
+	if fileMode {
+		saveNow()
+	}
+}
+
+// selectStorage выбирает реализацию Storage по приоритету: БД > файл > память.
+// fileMode сообщает вызывающей стороне, нужно ли поднимать тикер периодического
+// сохранения и graceful save в файл при остановке - эти механизмы не имеют смысла
+// для БД (сама персистентна) и для голой памяти (сохранять некуда).
+func selectStorage(cfg config, db *sql.DB) (storage repository.Storage, fileMode bool) {
+	if cfg.dsn != "" {
+		if err := repository.RunMigrations(db); err != nil {
+			logger.Log.Fatal("run migrations", zap.Error(err))
+		}
+		return repository.NewDBStorage(db), false
+	}
+
+	if cfg.fileStoragePath != "" {
+		storage = repository.NewMemStorage()
+
+		if cfg.restore {
+			metrics, err := repository.LoadFromFile(cfg.fileStoragePath)
+			if err != nil {
+				// Битый файл не должен мешать старту - поднимаемся с пустым хранилищем.
+				logger.Log.Error("restore metrics", zap.Error(err))
+			} else {
+				repository.Restore(storage, metrics)
+				logger.Log.Info("metrics restored", zap.Int("count", len(metrics)))
+			}
+		}
+
+		// Оборачиваем ПОСЛЕ восстановления: иначе Restore сам вызвал бы запись
+		// в файл на каждую залитую метрику.
+		if cfg.storeInterval == 0 {
+			storage = repository.NewSavingStorage(storage, cfg.fileStoragePath)
+		}
+
+		return storage, true
+	}
+
+	return repository.NewMemStorage(), false
 }
