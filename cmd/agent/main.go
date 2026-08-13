@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/dismoralzor/metalert/internal/model"
+	"github.com/dismoralzor/metalert/internal/retry"
 )
 
 // poll и report работают в разных горутинах, поэтому доступ к полям под мьютексом.
@@ -72,7 +73,7 @@ func (a *agent) poll() {
 }
 
 // Снимок под мьютексом отдельно от самой отправки - не держать лок на время HTTP-запросов.
-func (a *agent) report(client *http.Client, addr string) {
+func (a *agent) report(ctx context.Context, client *http.Client, addr string) {
 	a.mu.Lock()
 	gaugesSnapshot := make(map[string]float64, len(a.gauges))
 	maps.Copy(gaugesSnapshot, a.gauges)
@@ -97,7 +98,7 @@ func (a *agent) report(client *http.Client, addr string) {
 	// Вычитаем прирост из pollCount только после подтверждённой отправки - если
 	// POST не дойдёт, прирост останется в pollCount и уйдёт со следующим отчётом,
 	// а не потеряется.
-	if sendBatch(client, addr, metrics) {
+	if sendBatch(ctx, client, addr, metrics) {
 		a.mu.Lock()
 		a.pollCount -= pollCount
 		a.mu.Unlock()
@@ -106,7 +107,14 @@ func (a *agent) report(client *http.Client, addr string) {
 
 // sendBatch отправляет весь батч метрик одним JSON-массивом, сжатым gzip,
 // на POST /updates/ - вместо отдельного запроса на каждую метрику.
-func sendBatch(client *http.Client, addr string, metrics []models.Metrics) bool {
+//
+// Сетевую часть (сам POST) оборачиваем в retry.Do: если сервер временно
+// недоступен (connection refused, обрыв, таймаут), повторяем запрос ещё
+// до 3 раз с паузами 1s/3s/5s. Маршалинг и gzip делаем один раз ДО retry -
+// они детерминированы, повторять их не за чем, но тело запроса на каждую
+// попытку пересобираем заново из уже сжатых байт: bytes.Reader, в отличие
+// от bytes.Buffer, http-клиент "съедает" при первом же чтении.
+func sendBatch(ctx context.Context, client *http.Client, addr string, metrics []models.Metrics) bool {
 	body, err := json.Marshal(metrics)
 	if err != nil {
 		log.Printf("marshal batch: %v", err)
@@ -125,22 +133,30 @@ func sendBatch(client *http.Client, addr string, metrics []models.Metrics) bool 
 		log.Printf("compress batch: %v", err)
 		return false
 	}
+	compressedBody := compressed.Bytes()
 
 	url := fmt.Sprintf("http://%s/updates/", addr)
-	req, err := http.NewRequest(http.MethodPost, url, &compressed)
-	if err != nil {
-		log.Printf("build request batch: %v", err)
-		return false
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Content-Encoding", "gzip")
 
-	resp, err := client.Do(req)
+	err = retry.Do(ctx, func() error {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(compressedBody))
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Content-Encoding", "gzip")
+
+		resp, err := client.Do(req)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+		return nil
+	}, retry.IsRetriableNet)
+
 	if err != nil {
 		log.Printf("send batch: %v", err)
 		return false
 	}
-	defer resp.Body.Close()
 	return true
 }
 
@@ -189,7 +205,7 @@ func main() {
 			case <-ctx.Done():
 				return
 			case <-reportTicker.C:
-				a.report(client, cfg.addr)
+				a.report(ctx, client, cfg.addr)
 			}
 		}
 	}()

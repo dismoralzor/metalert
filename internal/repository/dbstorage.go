@@ -9,6 +9,7 @@ import (
 
 	"github.com/dismoralzor/metalert/internal/logger"
 	"github.com/dismoralzor/metalert/internal/model"
+	"github.com/dismoralzor/metalert/internal/retry"
 )
 
 // DBStorage реализует Storage поверх PostgreSQL: одна таблица metrics,
@@ -25,12 +26,17 @@ func NewDBStorage(db *sql.DB) *DBStorage {
 // context.Background() - обсудить пробрасывание ctx из handler'ов через интерфейс.
 
 // Ошибку логируем: интерфейс Storage не позволяет вернуть её вызывающей стороне.
+// retry.Do оборачивает Exec целиком - при обрыве соединения (Class 08) повторяем
+// тот же запрос ещё до 3 раз с паузами 1s/3s/5s.
 func (s *DBStorage) UpdateGauge(name string, value float64) {
-	_, err := s.db.ExecContext(context.Background(),
-		`INSERT INTO metrics (id, type, value) VALUES ($1, 'gauge', $2)
-		 ON CONFLICT (id) DO UPDATE SET value = $2, type = 'gauge'`,
-		name, value,
-	)
+	err := retry.Do(context.Background(), func() error {
+		_, err := s.db.ExecContext(context.Background(),
+			`INSERT INTO metrics (id, type, value) VALUES ($1, 'gauge', $2)
+			 ON CONFLICT (id) DO UPDATE SET value = $2, type = 'gauge'`,
+			name, value,
+		)
+		return err
+	}, retry.IsRetriablePG)
 	if err != nil {
 		logger.Log.Error("update gauge", zap.String("name", name), zap.Error(err))
 	}
@@ -38,11 +44,14 @@ func (s *DBStorage) UpdateGauge(name string, value float64) {
 
 // UpdateCounter прибавляет delta, а не заменяет значение - как и MemStorage.
 func (s *DBStorage) UpdateCounter(name string, delta int64) {
-	_, err := s.db.ExecContext(context.Background(),
-		`INSERT INTO metrics (id, type, delta) VALUES ($1, 'counter', $2)
-		 ON CONFLICT (id) DO UPDATE SET delta = metrics.delta + $2, type = 'counter'`,
-		name, delta,
-	)
+	err := retry.Do(context.Background(), func() error {
+		_, err := s.db.ExecContext(context.Background(),
+			`INSERT INTO metrics (id, type, delta) VALUES ($1, 'counter', $2)
+			 ON CONFLICT (id) DO UPDATE SET delta = metrics.delta + $2, type = 'counter'`,
+			name, delta,
+		)
+		return err
+	}, retry.IsRetriablePG)
 	if err != nil {
 		logger.Log.Error("update counter", zap.String("name", name), zap.Error(err))
 	}
@@ -50,11 +59,15 @@ func (s *DBStorage) UpdateCounter(name string, delta int64) {
 
 func (s *DBStorage) GetGauge(name string) (float64, bool) {
 	var value sql.NullFloat64
-	err := s.db.QueryRowContext(context.Background(),
-		`SELECT value FROM metrics WHERE id = $1 AND type = 'gauge'`,
-		name,
-	).Scan(&value)
+	err := retry.Do(context.Background(), func() error {
+		return s.db.QueryRowContext(context.Background(),
+			`SELECT value FROM metrics WHERE id = $1 AND type = 'gauge'`,
+			name,
+		).Scan(&value)
+	}, retry.IsRetriablePG)
 	if err != nil {
+		// sql.ErrNoRows - не retriable (IsRetriablePG вернёт false и выйдет сразу),
+		// но это штатный случай "метрика не найдена", логировать нечего.
 		if !errors.Is(err, sql.ErrNoRows) {
 			logger.Log.Error("get gauge", zap.String("name", name), zap.Error(err))
 		}
@@ -68,10 +81,12 @@ func (s *DBStorage) GetGauge(name string) (float64, bool) {
 
 func (s *DBStorage) GetCounter(name string) (int64, bool) {
 	var delta sql.NullInt64
-	err := s.db.QueryRowContext(context.Background(),
-		`SELECT delta FROM metrics WHERE id = $1 AND type = 'counter'`,
-		name,
-	).Scan(&delta)
+	err := retry.Do(context.Background(), func() error {
+		return s.db.QueryRowContext(context.Background(),
+			`SELECT delta FROM metrics WHERE id = $1 AND type = 'counter'`,
+			name,
+		).Scan(&delta)
+	}, retry.IsRetriablePG)
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
 			logger.Log.Error("get counter", zap.String("name", name), zap.Error(err))
@@ -87,6 +102,10 @@ func (s *DBStorage) GetCounter(name string) (int64, bool) {
 // UpdateBatch пишет весь батч одной транзакцией: либо применяются все метрики,
 // либо (при ошибке любого Exec) ни одна - частично применённый батч был бы хуже,
 // чем явный отказ.
+//
+// retry.Do оборачивает ВСЮ транзакцию (BeginTx → Exec'и → Commit) единым fn,
+// а не отдельные Exec внутри неё: если соединение оборвалось на середине, старая
+// транзакция уже не восстановить, повторять нужно с чистого BeginTx.
 func (s *DBStorage) UpdateBatch(ctx context.Context, metrics []models.Metrics) error {
 	if len(metrics) == 0 {
 		return nil
@@ -99,35 +118,37 @@ func (s *DBStorage) UpdateBatch(ctx context.Context, metrics []models.Metrics) e
 	// Exec), но лишние round-trip'ы и путаница, какое значение "победило".
 	aggregated := aggregateMetrics(metrics)
 
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	// Откат по умолчанию - идиома "defer Rollback, а успешный Commit его обезвредит"
-	// (Rollback после Commit вернёт sql.ErrTxDone, но это не проверяется - ошибка ожидаема).
-	defer tx.Rollback()
-
-	for _, m := range aggregated {
-		switch m.MType {
-		case models.Gauge:
-			_, err = tx.ExecContext(ctx,
-				`INSERT INTO metrics (id, type, value) VALUES ($1, 'gauge', $2)
-				 ON CONFLICT (id) DO UPDATE SET value = $2, type = 'gauge'`,
-				m.ID, *m.Value,
-			)
-		case models.Counter:
-			_, err = tx.ExecContext(ctx,
-				`INSERT INTO metrics (id, type, delta) VALUES ($1, 'counter', $2)
-				 ON CONFLICT (id) DO UPDATE SET delta = metrics.delta + $2, type = 'counter'`,
-				m.ID, *m.Delta,
-			)
-		}
+	return retry.Do(ctx, func() error {
+		tx, err := s.db.BeginTx(ctx, nil)
 		if err != nil {
 			return err
 		}
-	}
+		// Откат по умолчанию - идиома "defer Rollback, а успешный Commit его обезвредит"
+		// (Rollback после Commit вернёт sql.ErrTxDone, но это не проверяется - ошибка ожидаема).
+		defer tx.Rollback()
 
-	return tx.Commit()
+		for _, m := range aggregated {
+			switch m.MType {
+			case models.Gauge:
+				_, err = tx.ExecContext(ctx,
+					`INSERT INTO metrics (id, type, value) VALUES ($1, 'gauge', $2)
+					 ON CONFLICT (id) DO UPDATE SET value = $2, type = 'gauge'`,
+					m.ID, *m.Value,
+				)
+			case models.Counter:
+				_, err = tx.ExecContext(ctx,
+					`INSERT INTO metrics (id, type, delta) VALUES ($1, 'counter', $2)
+					 ON CONFLICT (id) DO UPDATE SET delta = metrics.delta + $2, type = 'counter'`,
+					m.ID, *m.Delta,
+				)
+			}
+			if err != nil {
+				return err
+			}
+		}
+
+		return tx.Commit()
+	}, retry.IsRetriablePG)
 }
 
 // aggregateMetrics схлопывает дубли по (id, type): для counter суммирует все delta
@@ -165,40 +186,51 @@ func aggregateMetrics(metrics []models.Metrics) []models.Metrics {
 }
 
 func (s *DBStorage) Metrics() []models.Metrics {
-	rows, err := s.db.QueryContext(context.Background(),
-		`SELECT id, type, value, delta FROM metrics`,
-	)
+	var result []models.Metrics
+
+	err := retry.Do(context.Background(), func() error {
+		rows, err := s.db.QueryContext(context.Background(),
+			`SELECT id, type, value, delta FROM metrics`,
+		)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+
+		// Копим в локальную переменную и присваиваем result только при полном
+		// успехе - иначе повтор после частичного прохода цикла задвоил бы записи.
+		var batch []models.Metrics
+		for rows.Next() {
+			var (
+				id, mType string
+				value     sql.NullFloat64
+				delta     sql.NullInt64
+			)
+			if err := rows.Scan(&id, &mType, &value, &delta); err != nil {
+				return err
+			}
+
+			m := models.Metrics{ID: id, MType: mType}
+			if value.Valid {
+				v := value.Float64
+				m.Value = &v
+			}
+			if delta.Valid {
+				d := delta.Int64
+				m.Delta = &d
+			}
+			batch = append(batch, m)
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+
+		result = batch
+		return nil
+	}, retry.IsRetriablePG)
+
 	if err != nil {
 		logger.Log.Error("list metrics", zap.Error(err))
-		return nil
-	}
-	defer rows.Close()
-
-	var result []models.Metrics
-	for rows.Next() {
-		var (
-			id, mType string
-			value     sql.NullFloat64
-			delta     sql.NullInt64
-		)
-		if err := rows.Scan(&id, &mType, &value, &delta); err != nil {
-			logger.Log.Error("scan metric", zap.Error(err))
-			return nil
-		}
-
-		m := models.Metrics{ID: id, MType: mType}
-		if value.Valid {
-			v := value.Float64
-			m.Value = &v
-		}
-		if delta.Valid {
-			d := delta.Int64
-			m.Delta = &d
-		}
-		result = append(result, m)
-	}
-	if err := rows.Err(); err != nil {
-		logger.Log.Error("iterate metrics", zap.Error(err))
 		return nil
 	}
 
