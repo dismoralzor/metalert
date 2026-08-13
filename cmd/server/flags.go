@@ -15,6 +15,7 @@ type config struct {
 	storeInterval   time.Duration
 	fileStoragePath string
 	restore         bool
+	dsn             string
 }
 
 func parseFlags() config {
@@ -23,6 +24,7 @@ func parseFlags() config {
 	storeInterval := flag.Int("i", 300, "интервал сохранения в файл, сек (0 - синхронно)")
 	fileStoragePath := flag.String("f", "metrics.json", "путь к файлу с метриками")
 	restoreFlag := flag.Bool("r", true, "загружать метрики из файла при старте")
+	dsn := flag.String("d", "", "строка подключения к БД (DSN)")
 	flag.Parse()
 
 	cfg := config{
@@ -31,6 +33,7 @@ func parseFlags() config {
 		storeInterval:   time.Duration(*storeInterval) * time.Second,
 		fileStoragePath: *fileStoragePath,
 		restore:         *restoreFlag,
+		dsn:             *dsn,
 	}
 
 	// Приоритет env > флаг > дефолт: флаги уже разобраны (в них дефолты),
@@ -60,6 +63,9 @@ func parseFlags() config {
 		} else {
 			cfg.restore = parsed
 		}
+	}
+	if envDSN := os.Getenv("DATABASE_DSN"); envDSN != "" {
+		cfg.dsn = envDSN
 	}
 
 	return cfg

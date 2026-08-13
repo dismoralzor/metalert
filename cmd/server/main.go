@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"log"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	_ "github.com/jackc/pgx/v5/stdlib"
 	"go.uber.org/zap"
 
 	"github.com/dismoralzor/metalert/internal/handler"
@@ -26,6 +28,19 @@ func main() {
 	// в синглтоне лежит no-op логгер, который проглотил бы это сообщение.
 	if err := logger.Initialize(cfg.logLevel); err != nil {
 		log.Fatal(err)
+	}
+
+	// БД опциональна на этом этапе: пустой dsn - работаем как раньше, на памяти/файле.
+	var db *sql.DB
+	if cfg.dsn != "" {
+		var err error
+		db, err = sql.Open("pgx", cfg.dsn)
+		if err != nil {
+			logger.Log.Error("open db", zap.Error(err))
+			db = nil
+		} else {
+			defer db.Close()
+		}
 	}
 
 	var storage repository.Storage = repository.NewMemStorage()
@@ -52,6 +67,7 @@ func main() {
 	indexHandler := handler.NewIndexHandler(storage)
 	updateJSONHandler := handler.NewUpdateJSONHandler(storage)
 	valueJSONHandler := handler.NewValueJSONHandler(storage)
+	pingHandler := handler.NewPingHandler(db)
 
 	r := chi.NewRouter()
 	// Use до регистрации роутов: chi паникует, если middleware добавляют
@@ -68,6 +84,7 @@ func main() {
 	r.Post("/value", valueJSONHandler.Value)
 	r.Post("/value/", valueJSONHandler.Value)
 	r.Get("/", indexHandler.Index)
+	r.Get("/ping", pingHandler.Ping)
 
 	saveNow := func() {
 		metrics := repository.Snapshot(storage)
