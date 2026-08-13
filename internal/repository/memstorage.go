@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"sync"
 
 	"github.com/dismoralzor/metalert/internal/model"
@@ -46,6 +47,31 @@ func (m *MemStorage) GetCounter(name string) (int64, bool) {
 	defer m.mu.RUnlock()
 	value, ok := m.counters[name]
 	return value, ok
+}
+
+// UpdateBatch применяет весь батч под ОДНИМ Lock - без него запрос из 30 метрик
+// дёргал бы мьютекс 30 раз, каждый раз рискуя пропустить вперёд другого writer'а
+// и получить metrics-снапшот из вперемешку старых и новых значений.
+// Логика UpdateGauge/UpdateCounter продублирована инлайном, а не вызвана напрямую:
+// RWMutex не реентерабельный, повторный Lock изнутри уже захваченного - дедлок.
+func (m *MemStorage) UpdateBatch(_ context.Context, metrics []models.Metrics) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for _, metric := range metrics {
+		switch metric.MType {
+		case models.Gauge:
+			if metric.Value != nil {
+				m.gauges[metric.ID] = *metric.Value
+			}
+		case models.Counter:
+			if metric.Delta != nil {
+				m.counters[metric.ID] += *metric.Delta
+			}
+		}
+	}
+
+	return nil
 }
 
 // Metrics строит DTO под мьютексом, а не отдаёт вызывающему коду доступ

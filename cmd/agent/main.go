@@ -79,56 +79,57 @@ func (a *agent) report(client *http.Client, addr string) {
 	pollCount := a.pollCount
 	a.mu.Unlock()
 
+	metrics := make([]models.Metrics, 0, len(gaugesSnapshot)+1)
 	for name, value := range gaugesSnapshot {
 		v := value
-		sendMetric(client, addr, models.Metrics{
-			ID:    name,
-			MType: models.Gauge,
-			Value: &v,
-		})
+		metrics = append(metrics, models.Metrics{ID: name, MType: models.Gauge, Value: &v})
 	}
 
-	// Сервер накапливает counter через += (UpdateCounter), поэтому шлём прирост
-	// с прошлой отправки, а не общий счётчик с начала работы агента. Вычитаем
-	// его из pollCount только после подтверждённой отправки - если POST не дойдёт,
-	// прирост останется в pollCount и уйдёт со следующим отчётом, а не потеряется.
+	// Сервер накапливает counter через += (UpdateCounter/UpdateBatch), поэтому шлём
+	// прирост с прошлой отправки, а не общий счётчик с начала работы агента.
 	delta := pollCount
-	if sendMetric(client, addr, models.Metrics{
-		ID:    "PollCount",
-		MType: models.Counter,
-		Delta: &delta,
-	}) {
+	metrics = append(metrics, models.Metrics{ID: "PollCount", MType: models.Counter, Delta: &delta})
+
+	if len(metrics) == 0 {
+		return
+	}
+
+	// Вычитаем прирост из pollCount только после подтверждённой отправки - если
+	// POST не дойдёт, прирост останется в pollCount и уйдёт со следующим отчётом,
+	// а не потеряется.
+	if sendBatch(client, addr, metrics) {
 		a.mu.Lock()
 		a.pollCount -= pollCount
 		a.mu.Unlock()
 	}
 }
 
-// sendMetric отправляет одну метрику JSON-ом, сжатым gzip, на POST /update/.
-func sendMetric(client *http.Client, addr string, m models.Metrics) bool {
-	body, err := json.Marshal(m)
+// sendBatch отправляет весь батч метрик одним JSON-массивом, сжатым gzip,
+// на POST /updates/ - вместо отдельного запроса на каждую метрику.
+func sendBatch(client *http.Client, addr string, metrics []models.Metrics) bool {
+	body, err := json.Marshal(metrics)
 	if err != nil {
-		log.Printf("marshal %s %s: %v", m.MType, m.ID, err)
+		log.Printf("marshal batch: %v", err)
 		return false
 	}
 
 	var compressed bytes.Buffer
 	zw := gzip.NewWriter(&compressed)
 	if _, err := zw.Write(body); err != nil {
-		log.Printf("compress %s %s: %v", m.MType, m.ID, err)
+		log.Printf("compress batch: %v", err)
 		return false
 	}
 	// Close до отправки, а не через defer: он дописывает хвост gzip-потока,
 	// без него сервер получит обрезанные данные.
 	if err := zw.Close(); err != nil {
-		log.Printf("compress %s %s: %v", m.MType, m.ID, err)
+		log.Printf("compress batch: %v", err)
 		return false
 	}
 
-	url := fmt.Sprintf("http://%s/update/", addr)
+	url := fmt.Sprintf("http://%s/updates/", addr)
 	req, err := http.NewRequest(http.MethodPost, url, &compressed)
 	if err != nil {
-		log.Printf("build request %s %s: %v", m.MType, m.ID, err)
+		log.Printf("build request batch: %v", err)
 		return false
 	}
 	req.Header.Set("Content-Type", "application/json")
@@ -136,7 +137,7 @@ func sendMetric(client *http.Client, addr string, m models.Metrics) bool {
 
 	resp, err := client.Do(req)
 	if err != nil {
-		log.Printf("send %s %s: %v", m.MType, m.ID, err)
+		log.Printf("send batch: %v", err)
 		return false
 	}
 	defer resp.Body.Close()

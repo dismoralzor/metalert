@@ -49,6 +49,7 @@ func main() {
 	valueHandler := handler.NewValueHandler(storage)
 	indexHandler := handler.NewIndexHandler(storage)
 	updateJSONHandler := handler.NewUpdateJSONHandler(storage)
+	updatesJSONHandler := handler.NewUpdatesJSONHandler(storage)
 	valueJSONHandler := handler.NewValueJSONHandler(storage)
 	pingHandler := handler.NewPingHandler(db)
 
@@ -64,6 +65,8 @@ func main() {
 	// "/update" и "/update/" разными путями - регистрируем оба варианта.
 	r.Post("/update", updateJSONHandler.Update)
 	r.Post("/update/", updateJSONHandler.Update)
+	r.Post("/updates", updatesJSONHandler.Update)
+	r.Post("/updates/", updatesJSONHandler.Update)
 	r.Post("/value", valueJSONHandler.Value)
 	r.Post("/value/", valueJSONHandler.Value)
 	r.Get("/", indexHandler.Index)

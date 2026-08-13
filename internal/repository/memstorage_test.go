@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"testing"
 
 	"github.com/dismoralzor/metalert/internal/model"
@@ -25,6 +26,30 @@ func TestMemStorage_UpdateCounter(t *testing.T) {
 
 	if got := m.counters["requests"]; got != 8 {
 		t.Errorf("counters[requests] = %v, want %v", got, 8)
+	}
+}
+
+func TestMemStorage_UpdateBatch(t *testing.T) {
+	m := NewMemStorage()
+
+	value := 23.5
+	deltaA, deltaB := int64(5), int64(3)
+	metrics := []models.Metrics{
+		{ID: "temperature", MType: models.Gauge, Value: &value},
+		{ID: "requests", MType: models.Counter, Delta: &deltaA},
+		{ID: "requests", MType: models.Counter, Delta: &deltaB},
+	}
+
+	if err := m.UpdateBatch(context.Background(), metrics); err != nil {
+		t.Fatalf("UpdateBatch() error = %v", err)
+	}
+
+	if got := m.gauges["temperature"]; got != 23.5 {
+		t.Errorf("gauges[temperature] = %v, want 23.5", got)
+	}
+	// Дубли counter в одном батче должны сложиться, а не перезаписаться.
+	if got := m.counters["requests"]; got != 8 {
+		t.Errorf("counters[requests] = %v, want 8", got)
 	}
 }
 
