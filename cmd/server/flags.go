@@ -16,6 +16,7 @@ type config struct {
 	fileStoragePath string
 	restore         bool
 	dsn             string
+	key             string
 }
 
 func parseFlags() config {
@@ -25,6 +26,7 @@ func parseFlags() config {
 	fileStoragePath := flag.String("f", "metrics.json", "путь к файлу с метриками")
 	restoreFlag := flag.Bool("r", true, "загружать метрики из файла при старте")
 	dsn := flag.String("d", "", "строка подключения к БД (DSN)")
+	key := flag.String("k", "", "ключ для подписи запросов/ответов HashSHA256 (пусто - подпись выключена)")
 	flag.Parse()
 
 	cfg := config{
@@ -34,6 +36,7 @@ func parseFlags() config {
 		fileStoragePath: *fileStoragePath,
 		restore:         *restoreFlag,
 		dsn:             *dsn,
+		key:             *key,
 	}
 
 	// Приоритет env > флаг > дефолт: флаги уже разобраны (в них дефолты),
@@ -66,6 +69,9 @@ func parseFlags() config {
 	}
 	if envDSN := os.Getenv("DATABASE_DSN"); envDSN != "" {
 		cfg.dsn = envDSN
+	}
+	if envKey := os.Getenv("KEY"); envKey != "" {
+		cfg.key = envKey
 	}
 
 	return cfg

@@ -12,6 +12,7 @@ type config struct {
 	addr           string
 	pollInterval   time.Duration
 	reportInterval time.Duration
+	key            string
 }
 
 func parseFlags() config {
@@ -20,12 +21,14 @@ func parseFlags() config {
 	// не Go-синтаксис вида "10s".
 	reportInterval := flag.Int("r", 10, "интервал отправки метрик, сек")
 	pollInterval := flag.Int("p", 2, "интервал сбора метрик, сек")
+	key := flag.String("k", "", "ключ для подписи запросов HashSHA256 (пусто - подпись выключена)")
 	flag.Parse()
 
 	cfg := config{
 		addr:           *addr,
 		pollInterval:   time.Duration(*pollInterval) * time.Second,
 		reportInterval: time.Duration(*reportInterval) * time.Second,
+		key:            *key,
 	}
 
 	// Приоритет env > флаг > дефолт: флаги уже разобраны (в них дефолты),
@@ -35,6 +38,9 @@ func parseFlags() config {
 	}
 	cfg.reportInterval = envInterval("REPORT_INTERVAL", cfg.reportInterval)
 	cfg.pollInterval = envInterval("POLL_INTERVAL", cfg.pollInterval)
+	if envKey := os.Getenv("KEY"); envKey != "" {
+		cfg.key = envKey
+	}
 
 	return cfg
 }

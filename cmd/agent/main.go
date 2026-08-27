@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/dismoralzor/metalert/internal/hash"
 	"github.com/dismoralzor/metalert/internal/model"
 	"github.com/dismoralzor/metalert/internal/retry"
 )
@@ -73,7 +74,7 @@ func (a *agent) poll() {
 }
 
 // Снимок под мьютексом отдельно от самой отправки - не держать лок на время HTTP-запросов.
-func (a *agent) report(ctx context.Context, client *http.Client, addr string) {
+func (a *agent) report(ctx context.Context, client *http.Client, addr, key string) {
 	a.mu.Lock()
 	gaugesSnapshot := make(map[string]float64, len(a.gauges))
 	maps.Copy(gaugesSnapshot, a.gauges)
@@ -98,7 +99,7 @@ func (a *agent) report(ctx context.Context, client *http.Client, addr string) {
 	// Вычитаем прирост из pollCount только после подтверждённой отправки - если
 	// POST не дойдёт, прирост останется в pollCount и уйдёт со следующим отчётом,
 	// а не потеряется.
-	if sendBatch(ctx, client, addr, metrics) {
+	if sendBatch(ctx, client, addr, key, metrics) {
 		a.mu.Lock()
 		a.pollCount -= pollCount
 		a.mu.Unlock()
@@ -108,17 +109,27 @@ func (a *agent) report(ctx context.Context, client *http.Client, addr string) {
 // sendBatch отправляет весь батч метрик одним JSON-массивом, сжатым gzip,
 // на POST /updates/ - вместо отдельного запроса на каждую метрику.
 //
+// Порядок важен: подпись считается от СЫРОГО JSON, ДО gzip - сервер распаковывает
+// тело раньше, чем проверяет HashSHA256, значит и агент обязан подписывать то же,
+// несжатое, тело. При пустом key заголовок вообще не добавляется - поведение как
+// до инкремента.
+//
 // Сетевую часть (сам POST) оборачиваем в retry.Do: если сервер временно
 // недоступен (connection refused, обрыв, таймаут), повторяем запрос ещё
-// до 3 раз с паузами 1s/3s/5s. Маршалинг и gzip делаем один раз ДО retry -
-// они детерминированы, повторять их не за чем, но тело запроса на каждую
-// попытку пересобираем заново из уже сжатых байт: bytes.Reader, в отличие
-// от bytes.Buffer, http-клиент "съедает" при первом же чтении.
-func sendBatch(ctx context.Context, client *http.Client, addr string, metrics []models.Metrics) bool {
+// до 3 раз с паузами 1s/3s/5s. Маршалинг, подпись и gzip делаем один раз ДО
+// retry - они детерминированы, повторять их не за чем, но тело запроса на
+// каждую попытку пересобираем заново из уже сжатых байт: bytes.Reader,
+// в отличие от bytes.Buffer, http-клиент "съедает" при первом же чтении.
+func sendBatch(ctx context.Context, client *http.Client, addr, key string, metrics []models.Metrics) bool {
 	body, err := json.Marshal(metrics)
 	if err != nil {
 		log.Printf("marshal batch: %v", err)
 		return false
+	}
+
+	var signature string
+	if key != "" {
+		signature = hash.Compute(body, key)
 	}
 
 	var compressed bytes.Buffer
@@ -144,6 +155,9 @@ func sendBatch(ctx context.Context, client *http.Client, addr string, metrics []
 		}
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Content-Encoding", "gzip")
+		if signature != "" {
+			req.Header.Set("HashSHA256", signature)
+		}
 
 		resp, err := client.Do(req)
 		if err != nil {
@@ -205,7 +219,7 @@ func main() {
 			case <-ctx.Done():
 				return
 			case <-reportTicker.C:
-				a.report(ctx, client, cfg.addr)
+				a.report(ctx, client, cfg.addr, cfg.key)
 			}
 		}
 	}()

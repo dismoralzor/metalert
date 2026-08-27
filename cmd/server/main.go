@@ -68,6 +68,9 @@ func main() {
 	// Логгер снаружи gzip: в лог попадает размер тела, реально ушедшего в сеть.
 	r.Use(logger.RequestLogger)
 	r.Use(handler.GzipMiddleware)
+	// ПОСЛЕ Gzip: агент считает подпись от НЕсжатого тела, значит и проверять
+	// её нужно уже после распаковки. При пустом cfg.key middleware прозрачен.
+	r.Use(handler.HashMiddleware(cfg.key))
 	r.Post("/update/{type}/{name}/{value}", updateHandler.Update)
 	r.Get("/value/{type}/{name}", valueHandler.Value)
 	// Спецификация описывает JSON-эндпоинты со слешем на конце, но chi считает
