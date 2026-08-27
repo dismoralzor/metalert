@@ -135,12 +135,31 @@ func main() {
 	logger.Log.Info("starting server", zap.String("addr", cfg.addr))
 	// После Shutdown ListenAndServe возвращает ErrServerClosed - это штатный выход.
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		logger.Log.Fatal(err.Error())
+		// log.Fatal (стандартный), а не logger.Log.Fatal: явный os.Exit(1) вместо
+		// того, чтобы полагаться на onFatal-хук zap-логгера. Это происходит ДО
+		// получения сигнала (например, "address already in use" при старте) -
+		// ctx ещё не отменён, а значит wg.Wait() ниже заблокировалась бы навсегда:
+		// тикер сохранения ждёт именно ctx.Done(), которого в этом сценарии не будет.
+		// Живой процесс без слушающего порта недопустим - выходим прямо здесь.
+		log.Fatalf("listen and serve: %v", err)
 	}
 
 	// Сначала дожидаемся остановки тикера, чтобы он не писал файл параллельно
-	// с финальным сохранением.
-	wg.Wait()
+	// с финальным сохранением. Оборачиваем в select с таймаутом: если фоновая
+	// горутина по какой-то причине не отреагирует на ctx.Done() (баг, зависание),
+	// процесс всё равно должен завершиться, а не держать порт занятым бесконечно.
+	waitDone := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(waitDone)
+	}()
+
+	select {
+	case <-waitDone:
+	case <-time.After(15 * time.Second):
+		logger.Log.Error("background goroutines did not stop in time, exiting anyway")
+	}
+
 	if fileMode {
 		saveNow()
 	}
