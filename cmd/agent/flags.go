@@ -13,6 +13,9 @@ type config struct {
 	pollInterval   time.Duration
 	reportInterval time.Duration
 	key            string
+	// rateLimit - число одновременных исходящих запросов (размер воркер-пула).
+	// Не путать с -l сервера (там это уровень логирования) - разные бинарники.
+	rateLimit int
 }
 
 func parseFlags() config {
@@ -22,6 +25,7 @@ func parseFlags() config {
 	reportInterval := flag.Int("r", 10, "интервал отправки метрик, сек")
 	pollInterval := flag.Int("p", 2, "интервал сбора метрик, сек")
 	key := flag.String("k", "", "ключ для подписи запросов HashSHA256 (пусто - подпись выключена)")
+	rateLimit := flag.Int("l", 1, "количество одновременных исходящих запросов")
 	flag.Parse()
 
 	cfg := config{
@@ -29,6 +33,7 @@ func parseFlags() config {
 		pollInterval:   time.Duration(*pollInterval) * time.Second,
 		reportInterval: time.Duration(*reportInterval) * time.Second,
 		key:            *key,
+		rateLimit:      *rateLimit,
 	}
 
 	// Приоритет env > флаг > дефолт: флаги уже разобраны (в них дефолты),
@@ -40,6 +45,20 @@ func parseFlags() config {
 	cfg.pollInterval = envInterval("POLL_INTERVAL", cfg.pollInterval)
 	if envKey := os.Getenv("KEY"); envKey != "" {
 		cfg.key = envKey
+	}
+	if raw := os.Getenv("RATE_LIMIT"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil {
+			log.Printf("invalid RATE_LIMIT=%q, using flag value: %v", raw, err)
+		} else {
+			cfg.rateLimit = n
+		}
+	}
+
+	// Ноль или отрицательное число воркеров означало бы, что jobsCh никто
+	// никогда не читает - аккумулятор зависнет на первой же отправке в jobsCh.
+	if cfg.rateLimit < 1 {
+		cfg.rateLimit = 1
 	}
 
 	return cfg

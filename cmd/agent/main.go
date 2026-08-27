@@ -7,12 +7,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"maps"
-	"math/rand"
 	"net/http"
 	"os"
 	"os/signal"
-	"runtime"
 	"sync"
 	"syscall"
 	"time"
@@ -22,88 +19,13 @@ import (
 	"github.com/dismoralzor/metalert/internal/retry"
 )
 
-// poll и report работают в разных горутинах, поэтому доступ к полям под мьютексом.
+// agent хранит только pollCount: горутина A инкрементирует его на каждый опрос,
+// аккумулятор оптимистично забирает его в батч и возвращает обратно при неудаче
+// отправки (см. runAccumulator). Сами метрики больше не копятся в структуре -
+// они летят по metricsCh сразу после сбора.
 type agent struct {
 	mu        sync.Mutex
-	gauges    map[string]float64
 	pollCount int64
-}
-
-func newAgent() *agent {
-	return &agent{gauges: make(map[string]float64)}
-}
-
-func (a *agent) poll() {
-	var m runtime.MemStats
-	runtime.ReadMemStats(&m)
-
-	a.mu.Lock()
-	defer a.mu.Unlock()
-
-	a.gauges["Alloc"] = float64(m.Alloc)
-	a.gauges["BuckHashSys"] = float64(m.BuckHashSys)
-	a.gauges["Frees"] = float64(m.Frees)
-	a.gauges["GCCPUFraction"] = m.GCCPUFraction
-	a.gauges["GCSys"] = float64(m.GCSys)
-	a.gauges["HeapAlloc"] = float64(m.HeapAlloc)
-	a.gauges["HeapIdle"] = float64(m.HeapIdle)
-	a.gauges["HeapInuse"] = float64(m.HeapInuse)
-	a.gauges["HeapObjects"] = float64(m.HeapObjects)
-	a.gauges["HeapReleased"] = float64(m.HeapReleased)
-	a.gauges["HeapSys"] = float64(m.HeapSys)
-	a.gauges["LastGC"] = float64(m.LastGC)
-	a.gauges["Lookups"] = float64(m.Lookups)
-	a.gauges["MCacheInuse"] = float64(m.MCacheInuse)
-	a.gauges["MCacheSys"] = float64(m.MCacheSys)
-	a.gauges["MSpanInuse"] = float64(m.MSpanInuse)
-	a.gauges["MSpanSys"] = float64(m.MSpanSys)
-	a.gauges["Mallocs"] = float64(m.Mallocs)
-	a.gauges["NextGC"] = float64(m.NextGC)
-	a.gauges["NumForcedGC"] = float64(m.NumForcedGC)
-	a.gauges["NumGC"] = float64(m.NumGC)
-	a.gauges["OtherSys"] = float64(m.OtherSys)
-	a.gauges["PauseTotalNs"] = float64(m.PauseTotalNs)
-	a.gauges["StackInuse"] = float64(m.StackInuse)
-	a.gauges["StackSys"] = float64(m.StackSys)
-	a.gauges["Sys"] = float64(m.Sys)
-	a.gauges["TotalAlloc"] = float64(m.TotalAlloc)
-	// math/rand с Go 1.20+ сеется случайно сам, явный Seed не нужен.
-	a.gauges["RandomValue"] = rand.Float64()
-
-	a.pollCount++
-}
-
-// Снимок под мьютексом отдельно от самой отправки - не держать лок на время HTTP-запросов.
-func (a *agent) report(ctx context.Context, client *http.Client, addr, key string) {
-	a.mu.Lock()
-	gaugesSnapshot := make(map[string]float64, len(a.gauges))
-	maps.Copy(gaugesSnapshot, a.gauges)
-	pollCount := a.pollCount
-	a.mu.Unlock()
-
-	metrics := make([]models.Metrics, 0, len(gaugesSnapshot)+1)
-	for name, value := range gaugesSnapshot {
-		v := value
-		metrics = append(metrics, models.Metrics{ID: name, MType: models.Gauge, Value: &v})
-	}
-
-	// Сервер накапливает counter через += (UpdateCounter/UpdateBatch), поэтому шлём
-	// прирост с прошлой отправки, а не общий счётчик с начала работы агента.
-	delta := pollCount
-	metrics = append(metrics, models.Metrics{ID: "PollCount", MType: models.Counter, Delta: &delta})
-
-	if len(metrics) == 0 {
-		return
-	}
-
-	// Вычитаем прирост из pollCount только после подтверждённой отправки - если
-	// POST не дойдёт, прирост останется в pollCount и уйдёт со следующим отчётом,
-	// а не потеряется.
-	if sendBatch(ctx, client, addr, key, metrics) {
-		a.mu.Lock()
-		a.pollCount -= pollCount
-		a.mu.Unlock()
-	}
 }
 
 // sendBatch отправляет весь батч метрик одним JSON-массивом, сжатым gzip,
@@ -181,7 +103,7 @@ func main() {
 	defer cancel()
 
 	// SIGTERM - обычный сигнал от docker stop / systemd, SIGINT - Ctrl+C.
-	// Один cancel() на оба - обеим горутинам ниже всё равно, каким сигналом их остановили.
+	// Один cancel() на оба - всем горутинам ниже всё равно, каким сигналом их остановили.
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 	go func() {
@@ -189,42 +111,50 @@ func main() {
 		cancel()
 	}()
 
-	a := newAgent()
+	a := &agent{}
 	client := &http.Client{Timeout: 5 * time.Second}
 
-	pollTicker := time.NewTicker(cfg.pollInterval)
-	defer pollTicker.Stop()
-	reportTicker := time.NewTicker(cfg.reportInterval)
-	defer reportTicker.Stop()
+	// metricsCh - выход горутин A и B, вход аккумулятора. jobsCh/resultsCh -
+	// обвязка между аккумулятором и пулом воркеров. Буферы небольшие: достаточно
+	// сгладить всплеск в момент отправки батча, не более того - основное
+	// ограничение конкурентности даёт число воркеров, а не размер буфера.
+	metricsCh := make(chan models.Metrics, 64)
+	jobsCh := make(chan job, cfg.rateLimit)
+	resultsCh := make(chan sendResult, cfg.rateLimit)
 
 	var wg sync.WaitGroup
-	wg.Add(2)
 
+	// Горутина A: runtime-метрики.
+	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-pollTicker.C:
-				a.poll()
-			}
-		}
+		collectRuntimeMetrics(ctx, cfg.pollInterval, metricsCh, a)
 	}()
 
+	// Горутина B: gopsutil-метрики, свой тикер, независимо от A.
+	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-reportTicker.C:
-				a.report(ctx, client, cfg.addr, cfg.key)
-			}
-		}
+		collectPSUtilMetrics(ctx, cfg.pollInterval, metricsCh)
 	}()
 
-	// Ждём сигнала, а затем - пока обе горутины реально завершатся
+	// Горутина-аккумулятор: копит metricsCh, по reportInterval формирует батч.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		runAccumulator(ctx, cfg.reportInterval, metricsCh, jobsCh, resultsCh, a)
+	}()
+
+	// Пул воркеров: не более cfg.rateLimit одновременных исходящих запросов.
+	for i := 0; i < cfg.rateLimit; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			runWorker(ctx, client, cfg.addr, cfg.key, jobsCh, resultsCh, sendBatch)
+		}()
+	}
+
+	// Ждём сигнала, а затем - пока все горутины реально завершатся
 	// (а не просто "получили сигнал и продолжают тикать где-то в фоне").
 	<-ctx.Done()
 	wg.Wait()
