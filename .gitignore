@@ -21,5 +21,4 @@ cmd/server/server
 vendor/
 
 # IDEs directories
-.idea
 .vscode
