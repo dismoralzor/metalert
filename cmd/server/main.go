@@ -30,16 +30,25 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// БД опциональна на этом этапе: пустой dsn - работаем как раньше, на памяти/файле.
+	// БД опциональна: пустой dsn - работаем как раньше, на памяти/файле. Но если dsn
+	// задан явно, а подключиться не удалось - это не повод тихо съехать на файловый
+	// режим (пользователь думает, что пишет в БД, а метрики идут в файл), поэтому
+	// падаем сразу, а не продолжаем с db == nil.
 	var db *sql.DB
 	if cfg.dsn != "" {
 		var err error
 		db, err = sql.Open("pgx", cfg.dsn)
 		if err != nil {
-			logger.Log.Error("open db", zap.Error(err))
-			db = nil
-		} else {
-			defer db.Close()
+			log.Fatalf("open db: %v", err)
+		}
+		defer db.Close()
+
+		// sql.Open соединение не устанавливает - без Ping неработающая БД
+		// обнаружилась бы только на первом реальном запросе, а не на старте.
+		pingCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if err := db.PingContext(pingCtx); err != nil {
+			log.Fatalf("ping db: %v", err)
 		}
 	}
 
