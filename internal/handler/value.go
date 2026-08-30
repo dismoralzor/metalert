@@ -27,7 +27,7 @@ func (h *ValueHandler) Value(w http.ResponseWriter, r *http.Request) {
 
 	switch metricType {
 	case models.Gauge:
-		v, ok := h.storage.GetGauge(metricName)
+		v, ok := h.storage.GetGauge(r.Context(), metricName)
 		if !ok {
 			http.Error(w, "metric not found", http.StatusNotFound)
 			return
@@ -35,7 +35,7 @@ func (h *ValueHandler) Value(w http.ResponseWriter, r *http.Request) {
 		value = strconv.FormatFloat(v, 'f', -1, 64)
 
 	case models.Counter:
-		v, ok := h.storage.GetCounter(metricName)
+		v, ok := h.storage.GetCounter(r.Context(), metricName)
 		if !ok {
 			http.Error(w, "metric not found", http.StatusNotFound)
 			return

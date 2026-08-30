@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"math"
 	"os"
 	"path/filepath"
@@ -87,11 +88,11 @@ func TestSnapshotSaveLoadRestore(t *testing.T) {
 
 	src := NewMemStorage()
 	for name, value := range gauges {
-		src.UpdateGauge(name, value)
+		src.UpdateGauge(context.Background(), name, value)
 	}
-	src.UpdateCounter("PollCount", 42)
+	src.UpdateCounter(context.Background(), "PollCount", 42)
 
-	snapshot := Snapshot(src)
+	snapshot := Snapshot(context.Background(), src)
 
 	path := filepath.Join(t.TempDir(), "metrics.json")
 	if err := SaveToFile(path, snapshot); err != nil {
@@ -104,10 +105,10 @@ func TestSnapshotSaveLoadRestore(t *testing.T) {
 	}
 
 	dst := NewMemStorage()
-	Restore(dst, loaded)
+	Restore(context.Background(), dst, loaded)
 
 	for name, want := range gauges {
-		got, ok := dst.GetGauge(name)
+		got, ok := dst.GetGauge(context.Background(), name)
 		if !ok {
 			t.Errorf("gauge %s missing after restore", name)
 			continue
@@ -117,7 +118,7 @@ func TestSnapshotSaveLoadRestore(t *testing.T) {
 		}
 	}
 
-	if got, ok := dst.GetCounter("PollCount"); !ok || got != 42 {
+	if got, ok := dst.GetCounter(context.Background(), "PollCount"); !ok || got != 42 {
 		t.Errorf("counter PollCount = %v (ok=%v), want 42", got, ok)
 	}
 }
@@ -219,7 +220,7 @@ func TestSavingStorage_WritesOnUpdate(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "metrics.json")
 	s := NewSavingStorage(NewMemStorage(), path)
 
-	s.UpdateGauge("Temperature", 23.5)
+	s.UpdateGauge(context.Background(), "Temperature", 23.5)
 
 	metrics, err := LoadFromFile(path)
 	if err != nil {
@@ -232,7 +233,7 @@ func TestSavingStorage_WritesOnUpdate(t *testing.T) {
 		t.Errorf("saved metric = %+v, want Temperature gauge 23.5", m)
 	}
 
-	s.UpdateCounter("PollCount", 7)
+	s.UpdateCounter(context.Background(), "PollCount", 7)
 
 	metrics, err = LoadFromFile(path)
 	if err != nil {

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,8 +13,8 @@ import (
 func TestValueJSONHandler_Value(t *testing.T) {
 	// Одно хранилище на все подтесты: Value только читает.
 	storage := repository.NewMemStorage()
-	storage.UpdateGauge("Temperature", 23.5)
-	storage.UpdateCounter("Requests", 10)
+	storage.UpdateGauge(context.Background(), "Temperature", 23.5)
+	storage.UpdateCounter(context.Background(), "Requests", 10)
 	h := NewValueJSONHandler(storage)
 
 	tests := []struct {

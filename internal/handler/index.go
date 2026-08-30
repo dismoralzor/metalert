@@ -55,7 +55,7 @@ func (h *IndexHandler) Index(w http.ResponseWriter, r *http.Request) {
 		Gauges   []metricRow
 		Counters []metricRow
 	}
-	for _, metric := range h.storage.Metrics() {
+	for _, metric := range h.storage.Metrics(r.Context()) {
 		switch metric.MType {
 		case models.Gauge:
 			if metric.Value == nil {

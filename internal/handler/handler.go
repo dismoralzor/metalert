@@ -39,7 +39,7 @@ func (h *UpdateHandler) Update(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "invalid gauge value", http.StatusBadRequest)
 			return
 		}
-		h.storage.UpdateGauge(metricName, value)
+		h.storage.UpdateGauge(r.Context(), metricName, value)
 
 	case models.Counter:
 		delta, err := strconv.ParseInt(rawValue, 10, 64)
@@ -47,7 +47,7 @@ func (h *UpdateHandler) Update(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "invalid counter value", http.StatusBadRequest)
 			return
 		}
-		h.storage.UpdateCounter(metricName, delta)
+		h.storage.UpdateCounter(r.Context(), metricName, delta)
 
 	default:
 		http.Error(w, "unknown metric type", http.StatusBadRequest)

@@ -10,8 +10,8 @@ import (
 func TestMemStorage_UpdateGauge(t *testing.T) {
 	m := NewMemStorage()
 
-	m.UpdateGauge("temperature", 10.0)
-	m.UpdateGauge("temperature", 20.0)
+	m.UpdateGauge(context.Background(), "temperature", 10.0)
+	m.UpdateGauge(context.Background(), "temperature", 20.0)
 
 	if got := m.gauges["temperature"]; got != 20.0 {
 		t.Errorf("gauges[temperature] = %v, want %v", got, 20.0)
@@ -21,8 +21,8 @@ func TestMemStorage_UpdateGauge(t *testing.T) {
 func TestMemStorage_UpdateCounter(t *testing.T) {
 	m := NewMemStorage()
 
-	m.UpdateCounter("requests", 5)
-	m.UpdateCounter("requests", 3)
+	m.UpdateCounter(context.Background(), "requests", 5)
+	m.UpdateCounter(context.Background(), "requests", 3)
 
 	if got := m.counters["requests"]; got != 8 {
 		t.Errorf("counters[requests] = %v, want %v", got, 8)
@@ -55,10 +55,10 @@ func TestMemStorage_UpdateBatch(t *testing.T) {
 
 func TestMemStorage_Metrics(t *testing.T) {
 	m := NewMemStorage()
-	m.UpdateGauge("temperature", 23.5)
-	m.UpdateCounter("requests", 10)
+	m.UpdateGauge(context.Background(), "temperature", 23.5)
+	m.UpdateCounter(context.Background(), "requests", 10)
 
-	got := m.Metrics()
+	got := m.Metrics(context.Background())
 	if len(got) != 2 {
 		t.Fatalf("Metrics() returned %d entries, want 2", len(got))
 	}

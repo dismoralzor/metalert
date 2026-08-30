@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,8 +13,8 @@ import (
 func TestValueHandler_Value(t *testing.T) {
 	// Один storage на все подтесты: Value только читает, изоляция не нужна.
 	storage := repository.NewMemStorage()
-	storage.UpdateGauge("temperature", 23.5)
-	storage.UpdateCounter("requests", 10)
+	storage.UpdateGauge(context.Background(), "temperature", 23.5)
+	storage.UpdateCounter(context.Background(), "requests", 10)
 	h := NewValueHandler(storage)
 
 	tests := []struct {

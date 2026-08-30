@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -69,22 +70,22 @@ func LoadFromFile(path string) ([]models.Metrics, error) {
 }
 
 // Snapshot возвращает текущее состояние хранилища в формате JSON-модели.
-func Snapshot(s Storage) []models.Metrics {
-	return s.Metrics()
+func Snapshot(ctx context.Context, s Storage) []models.Metrics {
+	return s.Metrics(ctx)
 }
 
 // Restore заливает метрики в хранилище. Рассчитан на однократный вызов при старте:
 // UpdateCounter прибавляет, поэтому повторный вызов удвоил бы счётчики.
-func Restore(s Storage, metrics []models.Metrics) {
+func Restore(ctx context.Context, s Storage, metrics []models.Metrics) {
 	for _, m := range metrics {
 		switch m.MType {
 		case models.Gauge:
 			if m.Value != nil {
-				s.UpdateGauge(m.ID, *m.Value)
+				s.UpdateGauge(ctx, m.ID, *m.Value)
 			}
 		case models.Counter:
 			if m.Delta != nil {
-				s.UpdateCounter(m.ID, *m.Delta)
+				s.UpdateCounter(ctx, m.ID, *m.Delta)
 			}
 		}
 	}

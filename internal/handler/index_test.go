@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,8 +13,8 @@ import (
 
 func TestIndexHandler_Index(t *testing.T) {
 	storage := repository.NewMemStorage()
-	storage.UpdateGauge("temperature", 23.5)
-	storage.UpdateCounter("requests", 10)
+	storage.UpdateGauge(context.Background(), "temperature", 23.5)
+	storage.UpdateCounter(context.Background(), "requests", 10)
 	h := NewIndexHandler(storage)
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)

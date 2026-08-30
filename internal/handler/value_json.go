@@ -27,7 +27,7 @@ func (h *ValueJSONHandler) Value(w http.ResponseWriter, r *http.Request) {
 
 	switch m.MType {
 	case models.Gauge:
-		value, ok := h.storage.GetGauge(m.ID)
+		value, ok := h.storage.GetGauge(r.Context(), m.ID)
 		if !ok {
 			http.Error(w, "metric not found", http.StatusNotFound)
 			return
@@ -35,7 +35,7 @@ func (h *ValueJSONHandler) Value(w http.ResponseWriter, r *http.Request) {
 		m.Value = &value
 
 	case models.Counter:
-		delta, ok := h.storage.GetCounter(m.ID)
+		delta, ok := h.storage.GetCounter(r.Context(), m.ID)
 		if !ok {
 			http.Error(w, "metric not found", http.StatusNotFound)
 			return

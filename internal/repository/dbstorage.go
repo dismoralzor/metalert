@@ -22,15 +22,15 @@ func NewDBStorage(db *sql.DB) *DBStorage {
 	return &DBStorage{db: db}
 }
 
-// TODO: интерфейс Storage сейчас без context.Context, поэтому здесь
-// context.Background() - обсудить пробрасывание ctx из handler'ов через интерфейс.
-
 // Ошибку логируем: интерфейс Storage не позволяет вернуть её вызывающей стороне.
 // retry.Do оборачивает Exec целиком - при обрыве соединения (Class 08) повторяем
-// тот же запрос ещё до 3 раз с паузами 1s/3s/5s.
-func (s *DBStorage) UpdateGauge(name string, value float64) {
-	err := retry.Do(context.Background(), func() error {
-		_, err := s.db.ExecContext(context.Background(),
+// тот же запрос ещё до 3 раз с паузами 1s/3s/5s. ctx приходит от вызывающей
+// стороны (у хендлеров - r.Context()) и прокидывается и в retry.Do, и в
+// ExecContext - отмена запроса клиентом обязана прервать реальный SQL-запрос,
+// а не только "текущую попытку" retry.
+func (s *DBStorage) UpdateGauge(ctx context.Context, name string, value float64) {
+	err := retry.Do(ctx, func() error {
+		_, err := s.db.ExecContext(ctx,
 			`INSERT INTO metrics (id, type, value) VALUES ($1, 'gauge', $2)
 			 ON CONFLICT (id) DO UPDATE SET value = $2, type = 'gauge'`,
 			name, value,
@@ -43,9 +43,9 @@ func (s *DBStorage) UpdateGauge(name string, value float64) {
 }
 
 // UpdateCounter прибавляет delta, а не заменяет значение - как и MemStorage.
-func (s *DBStorage) UpdateCounter(name string, delta int64) {
-	err := retry.Do(context.Background(), func() error {
-		_, err := s.db.ExecContext(context.Background(),
+func (s *DBStorage) UpdateCounter(ctx context.Context, name string, delta int64) {
+	err := retry.Do(ctx, func() error {
+		_, err := s.db.ExecContext(ctx,
 			`INSERT INTO metrics (id, type, delta) VALUES ($1, 'counter', $2)
 			 ON CONFLICT (id) DO UPDATE SET delta = metrics.delta + $2, type = 'counter'`,
 			name, delta,
@@ -57,10 +57,10 @@ func (s *DBStorage) UpdateCounter(name string, delta int64) {
 	}
 }
 
-func (s *DBStorage) GetGauge(name string) (float64, bool) {
+func (s *DBStorage) GetGauge(ctx context.Context, name string) (float64, bool) {
 	var value sql.NullFloat64
-	err := retry.Do(context.Background(), func() error {
-		return s.db.QueryRowContext(context.Background(),
+	err := retry.Do(ctx, func() error {
+		return s.db.QueryRowContext(ctx,
 			`SELECT value FROM metrics WHERE id = $1 AND type = 'gauge'`,
 			name,
 		).Scan(&value)
@@ -79,10 +79,10 @@ func (s *DBStorage) GetGauge(name string) (float64, bool) {
 	return value.Float64, true
 }
 
-func (s *DBStorage) GetCounter(name string) (int64, bool) {
+func (s *DBStorage) GetCounter(ctx context.Context, name string) (int64, bool) {
 	var delta sql.NullInt64
-	err := retry.Do(context.Background(), func() error {
-		return s.db.QueryRowContext(context.Background(),
+	err := retry.Do(ctx, func() error {
+		return s.db.QueryRowContext(ctx,
 			`SELECT delta FROM metrics WHERE id = $1 AND type = 'counter'`,
 			name,
 		).Scan(&delta)
@@ -185,11 +185,11 @@ func aggregateMetrics(metrics []models.Metrics) []models.Metrics {
 	return result
 }
 
-func (s *DBStorage) Metrics() []models.Metrics {
+func (s *DBStorage) Metrics(ctx context.Context) []models.Metrics {
 	var result []models.Metrics
 
-	err := retry.Do(context.Background(), func() error {
-		rows, err := s.db.QueryContext(context.Background(),
+	err := retry.Do(ctx, func() error {
+		rows, err := s.db.QueryContext(ctx,
 			`SELECT id, type, value, delta FROM metrics`,
 		)
 		if err != nil {

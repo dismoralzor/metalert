@@ -21,14 +21,14 @@ func NewSavingStorage(inner Storage, path string) *SavingStorage {
 	return &SavingStorage{Storage: inner, path: path}
 }
 
-func (s *SavingStorage) UpdateGauge(name string, value float64) {
-	s.Storage.UpdateGauge(name, value)
-	s.save()
+func (s *SavingStorage) UpdateGauge(ctx context.Context, name string, value float64) {
+	s.Storage.UpdateGauge(ctx, name, value)
+	s.save(ctx)
 }
 
-func (s *SavingStorage) UpdateCounter(name string, delta int64) {
-	s.Storage.UpdateCounter(name, delta)
-	s.save()
+func (s *SavingStorage) UpdateCounter(ctx context.Context, name string, delta int64) {
+	s.Storage.UpdateCounter(ctx, name, delta)
+	s.save(ctx)
 }
 
 // UpdateBatch сохраняет файл ОДИН раз после всего батча, а не на каждую метрику -
@@ -37,13 +37,13 @@ func (s *SavingStorage) UpdateBatch(ctx context.Context, metrics []models.Metric
 	if err := s.Storage.UpdateBatch(ctx, metrics); err != nil {
 		return err
 	}
-	s.save()
+	s.save(ctx)
 	return nil
 }
 
 // Ошибку записи логируем, но запрос не валим: метрика уже принята в память.
-func (s *SavingStorage) save() {
-	if err := SaveToFile(s.path, Snapshot(s.Storage)); err != nil {
+func (s *SavingStorage) save(ctx context.Context) {
+	if err := SaveToFile(s.path, Snapshot(ctx, s.Storage)); err != nil {
 		logger.Log.Error("sync save", zap.Error(err))
 	}
 }

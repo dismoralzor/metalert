@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"testing"
 
 	sqlmock "github.com/DATA-DOG/go-sqlmock"
@@ -23,7 +24,7 @@ func TestDBStorage_UpdateGauge(t *testing.T) {
 		WithArgs("temperature", 23.5).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
-	s.UpdateGauge("temperature", 23.5)
+	s.UpdateGauge(context.Background(), "temperature", 23.5)
 
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("unmet expectations: %v", err)
@@ -40,8 +41,8 @@ func TestDBStorage_UpdateCounter_Accumulates(t *testing.T) {
 		WithArgs("requests", int64(5)).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
-	s.UpdateCounter("requests", 10)
-	s.UpdateCounter("requests", 5)
+	s.UpdateCounter(context.Background(), "requests", 10)
+	s.UpdateCounter(context.Background(), "requests", 5)
 
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("unmet expectations: %v", err)
@@ -57,7 +58,7 @@ func TestDBStorage_GetGauge(t *testing.T) {
 			WithArgs("temperature").
 			WillReturnRows(rows)
 
-		value, ok := s.GetGauge("temperature")
+		value, ok := s.GetGauge(context.Background(), "temperature")
 		if !ok || value != 23.5 {
 			t.Errorf("GetGauge() = %v, %v, want 23.5, true", value, ok)
 		}
@@ -70,7 +71,7 @@ func TestDBStorage_GetGauge(t *testing.T) {
 			WithArgs("unknown").
 			WillReturnRows(sqlmock.NewRows([]string{"value"}))
 
-		_, ok := s.GetGauge("unknown")
+		_, ok := s.GetGauge(context.Background(), "unknown")
 		if ok {
 			t.Errorf("GetGauge() ok = true, want false")
 		}
@@ -86,7 +87,7 @@ func TestDBStorage_GetCounter(t *testing.T) {
 			WithArgs("requests").
 			WillReturnRows(rows)
 
-		delta, ok := s.GetCounter("requests")
+		delta, ok := s.GetCounter(context.Background(), "requests")
 		if !ok || delta != 15 {
 			t.Errorf("GetCounter() = %v, %v, want 15, true", delta, ok)
 		}
@@ -99,7 +100,7 @@ func TestDBStorage_GetCounter(t *testing.T) {
 			WithArgs("unknown").
 			WillReturnRows(sqlmock.NewRows([]string{"delta"}))
 
-		_, ok := s.GetCounter("unknown")
+		_, ok := s.GetCounter(context.Background(), "unknown")
 		if ok {
 			t.Errorf("GetCounter() ok = true, want false")
 		}
@@ -115,7 +116,7 @@ func TestDBStorage_Metrics(t *testing.T) {
 	mock.ExpectQuery(`SELECT id, type, value, delta FROM metrics`).
 		WillReturnRows(rows)
 
-	result := s.Metrics()
+	result := s.Metrics(context.Background())
 
 	if len(result) != 2 {
 		t.Fatalf("Metrics() len = %d, want 2", len(result))

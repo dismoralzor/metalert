@@ -38,7 +38,7 @@ func TestDBStorage_UpdateGauge_RetriesOnConnectionException(t *testing.T) {
 		WithArgs("temperature", 23.5).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
-	s.UpdateGauge("temperature", 23.5)
+	s.UpdateGauge(context.Background(), "temperature", 23.5)
 
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("unmet expectations (expected exactly 2 Exec calls): %v", err)
@@ -55,7 +55,7 @@ func TestDBStorage_UpdateGauge_DoesNotRetryOnNonConnectionError(t *testing.T) {
 		WithArgs("temperature", 23.5).
 		WillReturnError(&pgconn.PgError{Code: pgerrcode.UniqueViolation})
 
-	s.UpdateGauge("temperature", 23.5)
+	s.UpdateGauge(context.Background(), "temperature", 23.5)
 
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("unmet expectations (expected exactly 1 Exec call, no retry): %v", err)

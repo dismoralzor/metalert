@@ -22,27 +22,30 @@ func NewMemStorage() *MemStorage {
 	}
 }
 
-func (m *MemStorage) UpdateGauge(name string, value float64) {
+// ctx игнорируется во всех методах MemStorage: работа с map в памяти не делает
+// внешних вызовов и не может зависнуть - отменять тут нечего.
+
+func (m *MemStorage) UpdateGauge(_ context.Context, name string, value float64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.gauges[name] = value
 }
 
 // UpdateCounter прибавляет delta, а не заменяет значение.
-func (m *MemStorage) UpdateCounter(name string, delta int64) {
+func (m *MemStorage) UpdateCounter(_ context.Context, name string, delta int64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.counters[name] += delta
 }
 
-func (m *MemStorage) GetGauge(name string) (float64, bool) {
+func (m *MemStorage) GetGauge(_ context.Context, name string) (float64, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	value, ok := m.gauges[name]
 	return value, ok
 }
 
-func (m *MemStorage) GetCounter(name string) (int64, bool) {
+func (m *MemStorage) GetCounter(_ context.Context, name string) (int64, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	value, ok := m.counters[name]
@@ -77,7 +80,7 @@ func (m *MemStorage) UpdateBatch(_ context.Context, metrics []models.Metrics) er
 // Metrics строит DTO под мьютексом, а не отдаёт вызывающему коду доступ
 // к m.gauges/m.counters напрямую - иначе чтение без мьютекса и конкурентная
 // запись рядом привели бы к panic.
-func (m *MemStorage) Metrics() []models.Metrics {
+func (m *MemStorage) Metrics(_ context.Context) []models.Metrics {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 

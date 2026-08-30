@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 
@@ -36,14 +37,14 @@ func (h *UpdateJSONHandler) Update(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "value is required for gauge", http.StatusBadRequest)
 			return
 		}
-		h.storage.UpdateGauge(m.ID, *m.Value)
+		h.storage.UpdateGauge(r.Context(), m.ID, *m.Value)
 
 	case models.Counter:
 		if m.Delta == nil {
 			http.Error(w, "delta is required for counter", http.StatusBadRequest)
 			return
 		}
-		h.storage.UpdateCounter(m.ID, *m.Delta)
+		h.storage.UpdateCounter(r.Context(), m.ID, *m.Delta)
 
 	default:
 		http.Error(w, "unknown metric type", http.StatusBadRequest)
@@ -52,7 +53,7 @@ func (h *UpdateJSONHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	// Отдаём накопленное значение из хранилища, а не присланное тело:
 	// UpdateCounter делает +=, поэтому для counter они не совпадают.
-	h.fillStoredValue(&m)
+	h.fillStoredValue(r.Context(), &m)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -60,14 +61,14 @@ func (h *UpdateJSONHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 }
-func (h *UpdateJSONHandler) fillStoredValue(m *models.Metrics) {
+func (h *UpdateJSONHandler) fillStoredValue(ctx context.Context, m *models.Metrics) {
 	switch m.MType {
 	case models.Gauge:
-		if value, ok := h.storage.GetGauge(m.ID); ok {
+		if value, ok := h.storage.GetGauge(ctx, m.ID); ok {
 			m.Value = &value
 		}
 	case models.Counter:
-		if delta, ok := h.storage.GetCounter(m.ID); ok {
+		if delta, ok := h.storage.GetCounter(ctx, m.ID); ok {
 			m.Delta = &delta
 		}
 	}

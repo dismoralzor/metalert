@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -83,10 +84,10 @@ func TestUpdatesJSONHandler_StoresMetrics(t *testing.T) {
 		t.Fatalf("Update() code = %d, want %d", w.Code, http.StatusOK)
 	}
 
-	if value, ok := storage.GetGauge("Temperature"); !ok || value != 23.5 {
+	if value, ok := storage.GetGauge(context.Background(), "Temperature"); !ok || value != 23.5 {
 		t.Errorf("GetGauge(Temperature) = %v, %v, want 23.5, true", value, ok)
 	}
-	if delta, ok := storage.GetCounter("Requests"); !ok || delta != 5 {
+	if delta, ok := storage.GetCounter(context.Background(), "Requests"); !ok || delta != 5 {
 		t.Errorf("GetCounter(Requests) = %v, %v, want 5, true", delta, ok)
 	}
 }
@@ -106,7 +107,7 @@ func TestUpdatesJSONHandler_DuplicateCountersAccumulate(t *testing.T) {
 		t.Fatalf("Update() code = %d, want %d", w.Code, http.StatusOK)
 	}
 
-	if delta, ok := storage.GetCounter("Requests"); !ok || delta != 8 {
+	if delta, ok := storage.GetCounter(context.Background(), "Requests"); !ok || delta != 8 {
 		t.Errorf("GetCounter(Requests) = %v, %v, want 8, true", delta, ok)
 	}
 }

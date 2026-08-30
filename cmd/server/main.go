@@ -52,7 +52,10 @@ func main() {
 		}
 	}
 
-	storage, fileMode := selectStorage(cfg, db)
+	// Старт приложения - осмысленного родительского контекста ещё нет
+	// (сигналы перехватим чуть ниже), поэтому Background - как и раньше
+	// для Ping выше.
+	storage, fileMode := selectStorage(context.Background(), cfg, db)
 
 	updateHandler := handler.NewUpdateHandler(storage)
 	valueHandler := handler.NewValueHandler(storage)
@@ -84,8 +87,12 @@ func main() {
 	r.Get("/", indexHandler.Index)
 	r.Get("/ping", pingHandler.Ping)
 
-	saveNow := func() {
-		metrics := repository.Snapshot(storage)
+	// saveNow принимает ctx снаружи - и периодический тикер, и финальный
+	// graceful save заводят под него СВОЙ контекст с таймаутом (см. вызовы ниже):
+	// это фоновая операция вне цепочки запросов, у неё нет естественного
+	// "родительского" контекста вроде r.Context().
+	saveNow := func(ctx context.Context) {
+		metrics := repository.Snapshot(ctx, storage)
 		if err := repository.SaveToFile(cfg.fileStoragePath, metrics); err != nil {
 			logger.Log.Error("save metrics", zap.Error(err))
 			return
@@ -113,7 +120,9 @@ func main() {
 				case <-ctx.Done():
 					return
 				case <-ticker.C:
-					saveNow()
+					saveCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+					saveNow(saveCtx)
+					cancel()
 				}
 			}
 		}()
@@ -161,7 +170,9 @@ func main() {
 	}
 
 	if fileMode {
-		saveNow()
+		saveCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		saveNow(saveCtx)
 	}
 }
 
@@ -169,7 +180,7 @@ func main() {
 // fileMode сообщает вызывающей стороне, нужно ли поднимать тикер периодического
 // сохранения и graceful save в файл при остановке - эти механизмы не имеют смысла
 // для БД (сама персистентна) и для голой памяти (сохранять некуда).
-func selectStorage(cfg config, db *sql.DB) (storage repository.Storage, fileMode bool) {
+func selectStorage(ctx context.Context, cfg config, db *sql.DB) (storage repository.Storage, fileMode bool) {
 	if cfg.dsn != "" {
 		if err := repository.RunMigrations(db); err != nil {
 			logger.Log.Fatal("run migrations", zap.Error(err))
@@ -186,7 +197,7 @@ func selectStorage(cfg config, db *sql.DB) (storage repository.Storage, fileMode
 				// Битый файл не должен мешать старту - поднимаемся с пустым хранилищем.
 				logger.Log.Error("restore metrics", zap.Error(err))
 			} else {
-				repository.Restore(storage, metrics)
+				repository.Restore(ctx, storage, metrics)
 				logger.Log.Info("metrics restored", zap.Int("count", len(metrics)))
 			}
 		}
