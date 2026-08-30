@@ -4,19 +4,45 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/dismoralzor/metalert/internal/model"
 )
 
+// SaveToFile пишет метрики атомарно: во временный файл в ТОЙ ЖЕ директории,
+// что и path (важно - та же файловая система, иначе os.Rename не атомарен),
+// а затем переименовывает его поверх path. os.Rename - атомарная операция ОС:
+// в любой момент path либо старая полная версия, либо новая полная - падение
+// программы посреди записи никогда не оставит битый JSON на месте рабочего файла.
 func SaveToFile(path string, metrics []models.Metrics) error {
 	data, err := json.MarshalIndent(metrics, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal metrics: %w", err)
 	}
 
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		return fmt.Errorf("write %s: %w", path, err)
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return fmt.Errorf("create temp file: %w", err)
 	}
+	tmpPath := tmp.Name()
+
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("write temp file %s: %w", tmpPath, err)
+	}
+
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("close temp file %s: %w", tmpPath, err)
+	}
+
+	if err := os.Rename(tmpPath, path); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("rename %s to %s: %w", tmpPath, path, err)
+	}
+
 	return nil
 }
 

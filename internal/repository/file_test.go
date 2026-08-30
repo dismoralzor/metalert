@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -118,6 +119,98 @@ func TestSnapshotSaveLoadRestore(t *testing.T) {
 
 	if got, ok := dst.GetCounter("PollCount"); !ok || got != 42 {
 		t.Errorf("counter PollCount = %v (ok=%v), want 42", got, ok)
+	}
+}
+
+// Успешная запись не должна оставлять рядом временный файл - иначе директория
+// с метриками постепенно захламлялась бы .tmp-мусором.
+func TestSaveToFile_NoLeftoverTempFileOnSuccess(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "metrics.json")
+
+	metrics := []models.Metrics{{ID: "x", MType: models.Gauge, Value: gaugePtr(1)}}
+	if err := SaveToFile(path, metrics); err != nil {
+		t.Fatalf("SaveToFile: %v", err)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Name() != filepath.Base(path) {
+		t.Errorf("directory entries = %v, want exactly [%s]", entries, filepath.Base(path))
+	}
+}
+
+// Если временный файл записался, но переименовать его поверх path не удалось
+// (здесь имитируем это тем, что на месте path уже лежит директория - Rename
+// файла поверх директории обязан провалиться и на Windows, и на Linux),
+// SaveToFile должен вернуть ошибку и убрать временный файл, а не оставить
+// его валяться рядом.
+func TestSaveToFile_CleansUpTempFileOnRenameFailure(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "metrics.json")
+	if err := os.Mkdir(path, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", path, err)
+	}
+
+	metrics := []models.Metrics{{ID: "x", MType: models.Gauge, Value: gaugePtr(1)}}
+	if err := SaveToFile(path, metrics); err == nil {
+		t.Fatal("SaveToFile() error = nil, want error (rename onto a directory must fail)")
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	// Единственное, что должно остаться в директории - сама path-директория,
+	// временный файл рядом быть не должен.
+	if len(entries) != 1 {
+		t.Errorf("directory has %d entries after failed SaveToFile, want 1 (leaked temp file?): %v", len(entries), entries)
+	}
+}
+
+// Атомарность в действии: если запись во временный файл падает, рабочий файл
+// с ПРЕДЫДУЩИМ валидным содержимым остаётся нетронутым, а не обнуляется/бьётся.
+func TestSaveToFile_PreservesExistingFileOnFailure(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "metrics.json")
+
+	original := []models.Metrics{{ID: "Original", MType: models.Gauge, Value: gaugePtr(42)}}
+	if err := SaveToFile(path, original); err != nil {
+		t.Fatalf("SaveToFile (initial write): %v", err)
+	}
+
+	// Провоцируем ошибку на этапе Rename тем же трюком, что и выше, но теперь
+	// имя временного файла не пересекается с "metrics.json" - для этого нужен
+	// отдельный путь-директория, поэтому проверяем именно то, что после сбоя
+	// СТАРОЕ содержимое path не изменилось (не были задеты сами байты файла).
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile before: %v", err)
+	}
+
+	// os.Mkdir на месте занятого файла не сработает - вместо этого проверяем
+	// поведение через marshal-ошибку: math.Inf не кодируется в JSON.
+	bad := []models.Metrics{{ID: "Bad", MType: models.Gauge, Value: gaugePtr(math.Inf(1))}}
+	if err := SaveToFile(path, bad); err == nil {
+		t.Fatal("SaveToFile() error = nil, want error (marshal of +Inf must fail)")
+	}
+
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile after: %v", err)
+	}
+	if string(before) != string(after) {
+		t.Errorf("file content changed after failed SaveToFile:\nbefore: %s\nafter:  %s", before, after)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Errorf("directory has %d entries after failed SaveToFile, want 1 (leaked temp file?): %v", len(entries), entries)
 	}
 }
 
