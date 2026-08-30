@@ -23,7 +23,7 @@ func newHashResponseWriter(w http.ResponseWriter, key string) *hashResponseWrite
 }
 
 // WriteHeader запоминает код ответа, но НЕ пробрасывает его дальше - реальный
-// WriteHeader вызовется только из Flush, когда тело уже целиком в буфере.
+// WriteHeader вызовется только из writeSignedResponse, когда тело уже целиком в буфере.
 func (h *hashResponseWriter) WriteHeader(statusCode int) {
 	h.statusCode = statusCode
 }
@@ -32,10 +32,14 @@ func (h *hashResponseWriter) Write(b []byte) (int, error) {
 	return h.buf.Write(b)
 }
 
-// Flush считает подпись накопленного тела, выставляет заголовок и только
-// теперь пишет статус и тело в настоящий ResponseWriter. Вызывается один раз,
-// после того как хендлер полностью отработал.
-func (h *hashResponseWriter) Flush() {
+// writeSignedResponse считает подпись накопленного тела, выставляет заголовок
+// и только теперь пишет статус и тело в настоящий ResponseWriter. Вызывается
+// один раз, после того как хендлер полностью отработал.
+//
+// Названо НЕ Flush: это не про сброс буфера в смысле http.Flusher (частичная
+// отправка уже написанных данных), а про финализацию всего ответа целиком -
+// подпись, статус и тело уходят одним действием.
+func (h *hashResponseWriter) writeSignedResponse() {
 	sum := hash.Compute(h.buf.Bytes(), h.key)
 	h.ResponseWriter.Header().Set("HashSHA256", sum)
 	h.ResponseWriter.WriteHeader(h.statusCode)
@@ -78,7 +82,7 @@ func HashMiddleware(key string) func(http.Handler) http.Handler {
 
 			hw := newHashResponseWriter(w, key)
 			next.ServeHTTP(hw, r)
-			hw.Flush()
+			hw.writeSignedResponse()
 		})
 	}
 }
