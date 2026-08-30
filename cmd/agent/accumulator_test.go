@@ -78,7 +78,8 @@ func TestRunAccumulator_RestoresPollCountOnFailure(t *testing.T) {
 	metricsCh := make(chan models.Metrics)
 	jobsCh := make(chan job, 1)
 	resultsCh := make(chan sendResult, 1)
-	a := &agent{pollCount: 5}
+	a := &agent{}
+	a.pollCount.Store(5)
 
 	// Интервал намеренно большой - тикер не должен успеть сработать за время теста,
 	// проверяем именно обработку sendResult, а не формирование батча.
@@ -88,19 +89,13 @@ func TestRunAccumulator_RestoresPollCountOnFailure(t *testing.T) {
 
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
-		a.mu.Lock()
-		got := a.pollCount
-		a.mu.Unlock()
-		if got == 8 {
+		if got := a.pollCount.Load(); got == 8 {
 			return
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
 
-	a.mu.Lock()
-	got := a.pollCount
-	a.mu.Unlock()
-	t.Errorf("pollCount = %d, want 8 (5 + restored 3)", got)
+	t.Errorf("pollCount = %d, want 8 (5 + restored 3)", a.pollCount.Load())
 }
 
 // Успешная отправка НЕ должна ничего добавлять обратно - delta уже была
@@ -112,7 +107,8 @@ func TestRunAccumulator_DoesNotRestorePollCountOnSuccess(t *testing.T) {
 	metricsCh := make(chan models.Metrics)
 	jobsCh := make(chan job, 1)
 	resultsCh := make(chan sendResult, 1)
-	a := &agent{pollCount: 5}
+	a := &agent{}
+	a.pollCount.Store(5)
 
 	go runAccumulator(ctx, time.Hour, metricsCh, jobsCh, resultsCh, a)
 
@@ -120,10 +116,7 @@ func TestRunAccumulator_DoesNotRestorePollCountOnSuccess(t *testing.T) {
 
 	time.Sleep(100 * time.Millisecond)
 
-	a.mu.Lock()
-	got := a.pollCount
-	a.mu.Unlock()
-	if got != 5 {
+	if got := a.pollCount.Load(); got != 5 {
 		t.Errorf("pollCount = %d, want 5 (unchanged on success)", got)
 	}
 }

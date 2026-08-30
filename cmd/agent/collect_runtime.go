@@ -66,9 +66,7 @@ func collectRuntimeMetrics(ctx context.Context, pollInterval time.Duration, metr
 				sendMetric(ctx, metricsCh, models.Metrics{ID: name, MType: models.Gauge, Value: &v})
 			}
 
-			a.mu.Lock()
-			a.pollCount++
-			a.mu.Unlock()
+			a.pollCount.Add(1)
 		}
 	}
 }

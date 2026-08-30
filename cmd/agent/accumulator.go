@@ -59,9 +59,7 @@ func runAccumulator(
 
 		case res := <-resultsCh:
 			if !res.success {
-				a.mu.Lock()
-				a.pollCount += res.pollDelta
-				a.mu.Unlock()
+				a.pollCount.Add(res.pollDelta)
 			}
 
 		case <-ticker.C:
@@ -69,10 +67,7 @@ func runAccumulator(
 				continue
 			}
 
-			a.mu.Lock()
-			delta := a.pollCount
-			a.pollCount = 0
-			a.mu.Unlock()
+			delta := a.pollCount.Swap(0)
 
 			d := delta
 			batch := append(pending, models.Metrics{ID: "PollCount", MType: models.Counter, Delta: &d})
