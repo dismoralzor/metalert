@@ -6,11 +6,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -23,9 +25,12 @@ import (
 // аккумулятор оптимистично забирает его в батч и возвращает обратно при неудаче
 // отправки (см. runAccumulator). Сами метрики больше не копятся в структуре -
 // они летят по metricsCh сразу после сбора.
+//
+// atomic.Int64, а не мьютекс: единственная операция, которая тут нужна помимо
+// простого чтения/записи - "забрать текущее значение и обнулить", это ровно
+// Swap(0), без надобности в отдельной блокировке.
 type agent struct {
-	mu        sync.Mutex
-	pollCount int64
+	pollCount atomic.Int64
 }
 
 // sendBatch отправляет весь батч метрик одним JSON-массивом, сжатым gzip,
@@ -86,6 +91,11 @@ func sendBatch(ctx context.Context, client *http.Client, addr, key string, metri
 			return err
 		}
 		defer resp.Body.Close()
+		// Дочитываем тело ДО Close - иначе транспорт не может переиспользовать
+		// TCP-соединение (keep-alive) и на каждый запрос плодится новый коннект.
+		// В любой ветке (успех/не-2xx) - серверу всё равно нужно вычитать ответ,
+		// не только в "счастливом" пути.
+		io.Copy(io.Discard, resp.Body)
 
 		// client.Do возвращает err только при сбое транспорта - код ответа
 		// сервера (например 500 или 400) сюда не попадает и должен быть
