@@ -30,6 +30,13 @@ func TestIsRetriableNet(t *testing.T) {
 		// таймаут клиента тоже стоит повторить, это не баг классификатора.
 		{"context deadline exceeded - implements net.Error, retriable", context.DeadlineExceeded, true},
 		{"generic error - not retriable", errors.New("boom"), false},
+		{"http 500 - retriable", &HTTPStatusError{StatusCode: 500}, true},
+		{"http 503 - retriable", &HTTPStatusError{StatusCode: 503}, true},
+		{"http 599 - retriable (upper bound)", &HTTPStatusError{StatusCode: 599}, true},
+		{"http 400 - not retriable", &HTTPStatusError{StatusCode: 400}, false},
+		{"http 404 - not retriable", &HTTPStatusError{StatusCode: 404}, false},
+		{"http 499 - not retriable (below 5xx)", &HTTPStatusError{StatusCode: 499}, false},
+		{"http 600 - not retriable (above 5xx)", &HTTPStatusError{StatusCode: 600}, false},
 	}
 
 	for _, tt := range tests {

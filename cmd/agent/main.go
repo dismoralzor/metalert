@@ -86,6 +86,15 @@ func sendBatch(ctx context.Context, client *http.Client, addr, key string, metri
 			return err
 		}
 		defer resp.Body.Close()
+
+		// client.Do возвращает err только при сбое транспорта - код ответа
+		// сервера (например 500 или 400) сюда не попадает и должен быть
+		// проверен отдельно, иначе любой "успешный" HTTP-ответ (даже с ошибкой
+		// на сервере) считался бы удачной отправкой и pollDelta не вернулся
+		// бы в счётчик при неудаче.
+		if resp.StatusCode < http.StatusOK || resp.StatusCode > 299 {
+			return &retry.HTTPStatusError{StatusCode: resp.StatusCode}
+		}
 		return nil
 	}, retry.IsRetriableNet)
 
