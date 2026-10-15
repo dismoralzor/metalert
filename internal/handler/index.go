@@ -2,88 +2,64 @@ package handler
 
 import (
 	"bytes"
-	"html/template"
+	"html"
 	"net/http"
 	"strconv"
+	"sync"
 
 	"github.com/dismoralzor/metalert/internal/model"
 	"github.com/dismoralzor/metalert/internal/repository"
 )
 
-// metricRow - строка HTML-таблицы: Value уже отформатирован в текст,
-// шаблону не нужно разыменовывать указатели Metrics.Value/Delta.
-type metricRow struct {
-	Name  string
-	Value string
+// indexBufPool переиспользует буферы рендера между запросами: страница
+// собирается заново на каждый GET /, но сам буфер аллоцировать с нуля каждый
+// раз не нужно - на горячем пути это давало основную долю аллокаций.
+var indexBufPool = sync.Pool{
+	New: func() any { return new(bytes.Buffer) },
 }
-
-// html/template, не text/template: экранирует значения при вставке в HTML.
-const indexTemplateSrc = `<!DOCTYPE html>
-<html>
-<head><title>Metrics</title></head>
-<body>
-<h1>Metrics</h1>
-<h2>Gauges</h2>
-<ul>
-{{range .Gauges}}<li>{{.Name}}: {{.Value}}</li>
-{{end}}</ul>
-<h2>Counters</h2>
-<ul>
-{{range .Counters}}<li>{{.Name}}: {{.Value}}</li>
-{{end}}</ul>
-</body>
-</html>`
 
 type IndexHandler struct {
 	storage repository.Storage
-	tmpl    *template.Template
 }
 
 func NewIndexHandler(storage repository.Storage) *IndexHandler {
-	// Must паникует при невалидном шаблоне - это баг в коде, падать при старте
-	// приложения правильнее, чем на каждый запрос.
-	tmpl := template.Must(template.New("index").Parse(indexTemplateSrc))
-	return &IndexHandler{storage: storage, tmpl: tmpl}
+	return &IndexHandler{storage: storage}
 }
 
 func (h *IndexHandler) Index(w http.ResponseWriter, r *http.Request) {
-	// Metrics() отдаёт единый список без разделения по типу - делим его тут,
-	// а не в Storage, потому что это забота презентации (две секции на странице),
-	// а не хранилища. Форматирование Value/Delta в текст - тоже забота
-	// презентации: DTO хранилища остаётся типизированным.
-	var data struct {
-		Gauges   []metricRow
-		Counters []metricRow
-	}
-	for _, metric := range h.storage.Metrics(r.Context()) {
-		switch metric.MType {
-		case models.Gauge:
-			if metric.Value == nil {
-				continue
-			}
-			data.Gauges = append(data.Gauges, metricRow{
-				Name:  metric.ID,
-				Value: strconv.FormatFloat(*metric.Value, 'f', -1, 64),
-			})
-		case models.Counter:
-			if metric.Delta == nil {
-				continue
-			}
-			data.Counters = append(data.Counters, metricRow{
-				Name:  metric.ID,
-				Value: strconv.FormatInt(*metric.Delta, 10),
-			})
-		}
-	}
+	metrics := h.storage.Metrics(r.Context())
 
-	// Рендерим в буфер: если Execute упадёт на середине шаблона, w ещё не увидит
-	// ни байта, и http.Error сможет честно поставить 500 (иначе первый Write
-	// уже закоммитит статус 200).
-	var buf bytes.Buffer
-	if err := h.tmpl.Execute(&buf, data); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+	// Собираем HTML прямо в переиспользуемый буфер, без промежуточных срезов
+	// строк таблицы и без рефлексии html/template. Имена метрик приходят извне,
+	// поэтому экранируем их через html.EscapeString (значения числовые -
+	// strconv даёт безопасный вывод). Структура страницы прежняя.
+	buf := indexBufPool.Get().(*bytes.Buffer)
+	buf.Reset()
+	defer indexBufPool.Put(buf)
+
+	buf.WriteString("<!DOCTYPE html>\n<html>\n<head><title>Metrics</title></head>\n<body>\n<h1>Metrics</h1>\n<h2>Gauges</h2>\n<ul>\n")
+	for _, m := range metrics {
+		if m.MType != models.Gauge || m.Value == nil {
+			continue
+		}
+		buf.WriteString("<li>")
+		buf.WriteString(html.EscapeString(m.ID))
+		buf.WriteString(": ")
+		buf.WriteString(strconv.FormatFloat(*m.Value, 'f', -1, 64))
+		buf.WriteString("</li>\n")
 	}
+	buf.WriteString("</ul>\n<h2>Counters</h2>\n<ul>\n")
+	for _, m := range metrics {
+		if m.MType != models.Counter || m.Delta == nil {
+			continue
+		}
+		buf.WriteString("<li>")
+		buf.WriteString(html.EscapeString(m.ID))
+		buf.WriteString(": ")
+		buf.WriteString(strconv.FormatInt(*m.Delta, 10))
+		buf.WriteString("</li>\n")
+	}
+	buf.WriteString("</ul>\n</body>\n</html>")
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write(buf.Bytes())
