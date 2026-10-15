@@ -18,10 +18,13 @@ type DBStorage struct {
 	db *sql.DB
 }
 
+// NewDBStorage создаёт хранилище поверх уже открытого подключения db.
 func NewDBStorage(db *sql.DB) *DBStorage {
 	return &DBStorage{db: db}
 }
 
+// UpdateGauge записывает (upsert) значение gauge-метрики в БД.
+//
 // Ошибку логируем: интерфейс Storage не позволяет вернуть её вызывающей стороне.
 // retry.Do оборачивает Exec целиком - при обрыве соединения (Class 08) повторяем
 // тот же запрос ещё до 3 раз с паузами 1s/3s/5s. ctx приходит от вызывающей
@@ -57,6 +60,7 @@ func (s *DBStorage) UpdateCounter(ctx context.Context, name string, delta int64)
 	}
 }
 
+// GetGauge возвращает значение gauge-метрики из БД и признак её наличия.
 func (s *DBStorage) GetGauge(ctx context.Context, name string) (float64, bool) {
 	var value sql.NullFloat64
 	err := retry.Do(ctx, func() error {
@@ -79,6 +83,7 @@ func (s *DBStorage) GetGauge(ctx context.Context, name string) (float64, bool) {
 	return value.Float64, true
 }
 
+// GetCounter возвращает значение counter-метрики из БД и признак её наличия.
 func (s *DBStorage) GetCounter(ctx context.Context, name string) (int64, bool) {
 	var delta sql.NullInt64
 	err := retry.Do(ctx, func() error {
@@ -185,6 +190,7 @@ func aggregateMetrics(metrics []models.Metrics) []models.Metrics {
 	return result
 }
 
+// Metrics возвращает все метрики из БД в формате models.Metrics.
 func (s *DBStorage) Metrics(ctx context.Context) []models.Metrics {
 	var result []models.Metrics
 

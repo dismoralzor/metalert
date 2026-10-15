@@ -19,10 +19,14 @@ type UpdatesJSONHandler struct {
 	auditor Auditor
 }
 
+// NewUpdatesJSONHandler создаёт обработчик батча JSON POST /updates поверх
+// storage; auditor может быть nil - тогда аудит не ведётся.
 func NewUpdatesJSONHandler(storage repository.Storage, auditor Auditor) *UpdatesJSONHandler {
 	return &UpdatesJSONHandler{storage: storage, auditor: auditor}
 }
 
+// Update принимает батч метрик JSON-массивом, валидирует его целиком и
+// применяет одной операцией; при невалидной метрике весь батч отклоняется.
 func (h *UpdatesJSONHandler) Update(w http.ResponseWriter, r *http.Request) {
 	var metrics []models.Metrics
 	if err := json.NewDecoder(r.Body).Decode(&metrics); err != nil {

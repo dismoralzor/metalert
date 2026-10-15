@@ -1,3 +1,5 @@
+// Package logger предоставляет общий zap-логгер (синглтон Log) и middleware
+// RequestLogger, пишущее одну строку на каждый HTTP-запрос.
 package logger
 
 import (

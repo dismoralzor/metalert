@@ -17,10 +17,14 @@ type UpdateJSONHandler struct {
 	auditor Auditor
 }
 
+// NewUpdateJSONHandler создаёт обработчик JSON POST /update поверх storage;
+// auditor может быть nil - тогда аудит не ведётся.
 func NewUpdateJSONHandler(storage repository.Storage, auditor Auditor) *UpdateJSONHandler {
 	return &UpdateJSONHandler{storage: storage, auditor: auditor}
 }
 
+// Update принимает одну метрику в JSON-теле, сохраняет её и возвращает
+// обновлённую метрику с накопленным значением из хранилища.
 func (h *UpdateJSONHandler) Update(w http.ResponseWriter, r *http.Request) {
 	var m models.Metrics
 	if err := json.NewDecoder(r.Body).Decode(&m); err != nil {

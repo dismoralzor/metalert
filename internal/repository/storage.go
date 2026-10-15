@@ -1,3 +1,7 @@
+// Package repository содержит слой хранения метрик: интерфейс Storage и его
+// реализации - in-memory (MemStorage), декоратор синхронной записи в файл
+// (SavingStorage) и хранилище в PostgreSQL (DBStorage), а также помощники
+// сохранения/восстановления состояния в файл.
 package repository
 
 import (

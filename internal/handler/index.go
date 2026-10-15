@@ -18,14 +18,17 @@ var indexBufPool = sync.Pool{
 	New: func() any { return new(bytes.Buffer) },
 }
 
+// IndexHandler обслуживает GET / - HTML-страницу со списком всех метрик.
 type IndexHandler struct {
 	storage repository.Storage
 }
 
+// NewIndexHandler создаёт обработчик страницы со списком метрик поверх storage.
 func NewIndexHandler(storage repository.Storage) *IndexHandler {
 	return &IndexHandler{storage: storage}
 }
 
+// Index рендерит HTML-страницу с текущими gauge- и counter-метриками.
 func (h *IndexHandler) Index(w http.ResponseWriter, r *http.Request) {
 	metrics := h.storage.Metrics(r.Context())
 

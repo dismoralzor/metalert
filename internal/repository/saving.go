@@ -17,15 +17,19 @@ type SavingStorage struct {
 	path string
 }
 
+// NewSavingStorage оборачивает inner так, чтобы после каждой записи метрики
+// состояние синхронно сохранялось в файл path (режим STORE_INTERVAL=0).
 func NewSavingStorage(inner Storage, path string) *SavingStorage {
 	return &SavingStorage{Storage: inner, path: path}
 }
 
+// UpdateGauge записывает метрику во внутреннее хранилище и сохраняет файл.
 func (s *SavingStorage) UpdateGauge(ctx context.Context, name string, value float64) {
 	s.Storage.UpdateGauge(ctx, name, value)
 	s.save(ctx)
 }
 
+// UpdateCounter прибавляет delta во внутреннем хранилище и сохраняет файл.
 func (s *SavingStorage) UpdateCounter(ctx context.Context, name string, delta int64) {
 	s.Storage.UpdateCounter(ctx, name, delta)
 	s.save(ctx)

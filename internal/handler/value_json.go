@@ -14,10 +14,13 @@ type ValueJSONHandler struct {
 	storage repository.Storage
 }
 
+// NewValueJSONHandler создаёт обработчик JSON POST /value поверх storage.
 func NewValueJSONHandler(storage repository.Storage) *ValueJSONHandler {
 	return &ValueJSONHandler{storage: storage}
 }
 
+// Value принимает id и type в JSON-теле и возвращает ту же структуру с
+// заполненным Value или Delta; 404 - если метрики нет или тип неизвестен.
 func (h *ValueJSONHandler) Value(w http.ResponseWriter, r *http.Request) {
 	var m models.Metrics
 	if err := json.NewDecoder(r.Body).Decode(&m); err != nil {

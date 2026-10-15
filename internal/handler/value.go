@@ -15,10 +15,13 @@ type ValueHandler struct {
 	storage repository.Storage
 }
 
+// NewValueHandler создаёт обработчик текстового GET /value поверх storage.
 func NewValueHandler(storage repository.Storage) *ValueHandler {
 	return &ValueHandler{storage: storage}
 }
 
+// Value возвращает текущее значение метрики по типу и имени из пути URL
+// (text/plain) либо 404, если метрики нет или тип неизвестен.
 func (h *ValueHandler) Value(w http.ResponseWriter, r *http.Request) {
 	metricType := chi.URLParam(r, "type")
 	metricName := chi.URLParam(r, "name")

@@ -7,6 +7,8 @@ import (
 	models "github.com/dismoralzor/metalert/internal/model"
 )
 
+// MemStorage - реализация Storage поверх map в памяти.
+//
 // Мьютекс нужен, т.к. конкурентная запись в map без синхронизации паникует.
 // RWMutex, а не Mutex: чтения (GET /value, GET /) не должны блокировать друг друга.
 type MemStorage struct {
@@ -15,6 +17,7 @@ type MemStorage struct {
 	counters map[string]int64
 }
 
+// NewMemStorage создаёт пустое хранилище метрик в памяти.
 func NewMemStorage() *MemStorage {
 	return &MemStorage{
 		gauges:   make(map[string]float64),
@@ -25,6 +28,7 @@ func NewMemStorage() *MemStorage {
 // ctx игнорируется во всех методах MemStorage: работа с map в памяти не делает
 // внешних вызовов и не может зависнуть - отменять тут нечего.
 
+// UpdateGauge устанавливает значение gauge-метрики name (перезапись).
 func (m *MemStorage) UpdateGauge(_ context.Context, name string, value float64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -38,6 +42,7 @@ func (m *MemStorage) UpdateCounter(_ context.Context, name string, delta int64) 
 	m.counters[name] += delta
 }
 
+// GetGauge возвращает значение gauge-метрики и признак её наличия.
 func (m *MemStorage) GetGauge(_ context.Context, name string) (float64, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -45,6 +50,7 @@ func (m *MemStorage) GetGauge(_ context.Context, name string) (float64, bool) {
 	return value, ok
 }
 
+// GetCounter возвращает значение counter-метрики и признак её наличия.
 func (m *MemStorage) GetCounter(_ context.Context, name string) (int64, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
