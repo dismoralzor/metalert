@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"time"
 
+	"github.com/dismoralzor/metalert/internal/audit"
 	"github.com/dismoralzor/metalert/internal/model"
 	"github.com/dismoralzor/metalert/internal/repository"
 )
@@ -12,10 +14,11 @@ import (
 // UpdateJSONHandler обслуживает POST /update с JSON-телом.
 type UpdateJSONHandler struct {
 	storage repository.Storage
+	auditor Auditor
 }
 
-func NewUpdateJSONHandler(storage repository.Storage) *UpdateJSONHandler {
-	return &UpdateJSONHandler{storage: storage}
+func NewUpdateJSONHandler(storage repository.Storage, auditor Auditor) *UpdateJSONHandler {
+	return &UpdateJSONHandler{storage: storage, auditor: auditor}
 }
 
 func (h *UpdateJSONHandler) Update(w http.ResponseWriter, r *http.Request) {
@@ -54,6 +57,15 @@ func (h *UpdateJSONHandler) Update(w http.ResponseWriter, r *http.Request) {
 	// Отдаём накопленное значение из хранилища, а не присланное тело:
 	// UpdateCounter делает +=, поэтому для counter они не совпадают.
 	h.fillStoredValue(r.Context(), &m)
+
+	// Аудит ДО ответа 200 (см. UpdateHandler.Update).
+	if h.auditor != nil {
+		h.auditor.NotifyAll(audit.Event{
+			TS:        time.Now().Unix(),
+			Metrics:   []string{m.ID},
+			IPAddress: clientIP(r),
+		})
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)

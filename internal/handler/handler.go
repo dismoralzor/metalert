@@ -3,9 +3,11 @@ package handler
 import (
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/dismoralzor/metalert/internal/audit"
 	"github.com/dismoralzor/metalert/internal/model"
 	"github.com/dismoralzor/metalert/internal/repository"
 )
@@ -14,10 +16,11 @@ import (
 // это позволяет в тестах подставить фейковую реализацию Storage.
 type UpdateHandler struct {
 	storage repository.Storage
+	auditor Auditor
 }
 
-func NewUpdateHandler(storage repository.Storage) *UpdateHandler {
-	return &UpdateHandler{storage: storage}
+func NewUpdateHandler(storage repository.Storage, auditor Auditor) *UpdateHandler {
+	return &UpdateHandler{storage: storage, auditor: auditor}
 }
 
 func (h *UpdateHandler) Update(w http.ResponseWriter, r *http.Request) {
@@ -52,6 +55,16 @@ func (h *UpdateHandler) Update(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "unknown metric type", http.StatusBadRequest)
 		return
+	}
+
+	// Аудит ДО ответа 200: к моменту, когда клиент видит успех, событие уже
+	// разослано приёмникам (для файла - строка уже на диске).
+	if h.auditor != nil {
+		h.auditor.NotifyAll(audit.Event{
+			TS:        time.Now().Unix(),
+			Metrics:   []string{metricName},
+			IPAddress: clientIP(r),
+		})
 	}
 
 	// http.Error сам проставляет Content-Type на ошибочных ответах,

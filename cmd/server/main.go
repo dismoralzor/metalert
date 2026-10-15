@@ -16,6 +16,7 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"go.uber.org/zap"
 
+	"github.com/dismoralzor/metalert/internal/audit"
 	"github.com/dismoralzor/metalert/internal/handler"
 	"github.com/dismoralzor/metalert/internal/logger"
 	"github.com/dismoralzor/metalert/internal/repository"
@@ -57,11 +58,23 @@ func main() {
 	// для Ping выше.
 	storage, fileMode := selectStorage(context.Background(), cfg, db)
 
-	updateHandler := handler.NewUpdateHandler(storage)
+	// Аудитор (паттерн Наблюдатель): издатель + приёмники по конфигу.
+	// Подписчиков может не быть вовсе - тогда NotifyAll просто ничего не делает.
+	auditor := audit.NewSubject()
+	if cfg.auditFile != "" {
+		auditor.Subscribe(audit.NewFileObserver(cfg.auditFile))
+		logger.Log.Info("audit file observer enabled", zap.String("path", cfg.auditFile))
+	}
+	if cfg.auditURL != "" {
+		auditor.Subscribe(audit.NewHTTPObserver(cfg.auditURL))
+		logger.Log.Info("audit http observer enabled", zap.String("url", cfg.auditURL))
+	}
+
+	updateHandler := handler.NewUpdateHandler(storage, auditor)
 	valueHandler := handler.NewValueHandler(storage)
 	indexHandler := handler.NewIndexHandler(storage)
-	updateJSONHandler := handler.NewUpdateJSONHandler(storage)
-	updatesJSONHandler := handler.NewUpdatesJSONHandler(storage)
+	updateJSONHandler := handler.NewUpdateJSONHandler(storage, auditor)
+	updatesJSONHandler := handler.NewUpdatesJSONHandler(storage, auditor)
 	valueJSONHandler := handler.NewValueJSONHandler(storage)
 	pingHandler := handler.NewPingHandler(db)
 

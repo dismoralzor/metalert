@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
+	"github.com/dismoralzor/metalert/internal/audit"
 	"github.com/dismoralzor/metalert/internal/model"
 	"github.com/dismoralzor/metalert/internal/repository"
 )
@@ -14,10 +16,11 @@ import (
 // вместо N отдельных запросов на /update, как раньше слал агент.
 type UpdatesJSONHandler struct {
 	storage repository.Storage
+	auditor Auditor
 }
 
-func NewUpdatesJSONHandler(storage repository.Storage) *UpdatesJSONHandler {
-	return &UpdatesJSONHandler{storage: storage}
+func NewUpdatesJSONHandler(storage repository.Storage, auditor Auditor) *UpdatesJSONHandler {
+	return &UpdatesJSONHandler{storage: storage, auditor: auditor}
 }
 
 func (h *UpdatesJSONHandler) Update(w http.ResponseWriter, r *http.Request) {
@@ -44,6 +47,19 @@ func (h *UpdatesJSONHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if err := h.storage.UpdateBatch(r.Context(), metrics); err != nil {
 		http.Error(w, "failed to save metrics", http.StatusInternalServerError)
 		return
+	}
+
+	// Аудит ДО ответа 200: в событие попадают имена всех метрик батча.
+	if h.auditor != nil {
+		names := make([]string, len(metrics))
+		for i, m := range metrics {
+			names[i] = m.ID
+		}
+		h.auditor.NotifyAll(audit.Event{
+			TS:        time.Now().Unix(),
+			Metrics:   names,
+			IPAddress: clientIP(r),
+		})
 	}
 
 	w.Header().Set("Content-Type", "application/json")

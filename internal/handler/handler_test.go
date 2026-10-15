@@ -49,7 +49,7 @@ func TestUpdateHandler_Update(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			storage := repository.NewMemStorage()
-			h := NewUpdateHandler(storage)
+			h := NewUpdateHandler(storage, nil)
 
 			req := httptest.NewRequest(http.MethodPost, "/update/"+tt.metricType+"/"+tt.metricName+"/"+tt.value, nil)
 			req = withChiURLParams(req, map[string]string{

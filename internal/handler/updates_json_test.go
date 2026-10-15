@@ -55,7 +55,7 @@ func TestUpdatesJSONHandler_Update(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			h := NewUpdatesJSONHandler(repository.NewMemStorage())
+			h := NewUpdatesJSONHandler(repository.NewMemStorage(), nil)
 
 			req := httptest.NewRequest(http.MethodPost, "/updates/", strings.NewReader(tt.body))
 			w := httptest.NewRecorder()
@@ -72,7 +72,7 @@ func TestUpdatesJSONHandler_Update(t *testing.T) {
 // Батч должен реально попадать в хранилище, а не только отвечать 200.
 func TestUpdatesJSONHandler_StoresMetrics(t *testing.T) {
 	storage := repository.NewMemStorage()
-	h := NewUpdatesJSONHandler(storage)
+	h := NewUpdatesJSONHandler(storage, nil)
 
 	body := `[{"id":"Temperature","type":"gauge","value":23.5},{"id":"Requests","type":"counter","delta":5}]`
 	req := httptest.NewRequest(http.MethodPost, "/updates/", strings.NewReader(body))
@@ -95,7 +95,7 @@ func TestUpdatesJSONHandler_StoresMetrics(t *testing.T) {
 // Дубли counter внутри одного батча должны сложиться, а не перезаписаться.
 func TestUpdatesJSONHandler_DuplicateCountersAccumulate(t *testing.T) {
 	storage := repository.NewMemStorage()
-	h := NewUpdatesJSONHandler(storage)
+	h := NewUpdatesJSONHandler(storage, nil)
 
 	body := `[{"id":"Requests","type":"counter","delta":5},{"id":"Requests","type":"counter","delta":3}]`
 	req := httptest.NewRequest(http.MethodPost, "/updates/", strings.NewReader(body))

@@ -14,7 +14,7 @@ import (
 func TestGzipMiddleware(t *testing.T) {
 	srv := httptest.NewServer(
 		GzipMiddleware(http.HandlerFunc(
-			NewUpdateJSONHandler(repository.NewMemStorage()).Update,
+			NewUpdateJSONHandler(repository.NewMemStorage(), nil).Update,
 		)),
 	)
 	defer srv.Close()

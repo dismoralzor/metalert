@@ -79,7 +79,7 @@ func TestUpdateJSONHandler_Update(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Своё хранилище на подтест: counter накапливается.
-			h := NewUpdateJSONHandler(repository.NewMemStorage())
+			h := NewUpdateJSONHandler(repository.NewMemStorage(), nil)
 
 			req := httptest.NewRequest(http.MethodPost, "/update", strings.NewReader(tt.body))
 			w := httptest.NewRecorder()
@@ -103,7 +103,7 @@ func TestUpdateJSONHandler_Update(t *testing.T) {
 
 // Ответ должен содержать накопленное значение, а не присланную delta.
 func TestUpdateJSONHandler_CounterAccumulates(t *testing.T) {
-	h := NewUpdateJSONHandler(repository.NewMemStorage())
+	h := NewUpdateJSONHandler(repository.NewMemStorage(), nil)
 
 	var lastBody io.Reader
 	for range 2 {
