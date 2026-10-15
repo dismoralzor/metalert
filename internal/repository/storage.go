@@ -3,7 +3,7 @@ package repository
 import (
 	"context"
 
-	"github.com/dismoralzor/metalert/internal/model"
+	models "github.com/dismoralzor/metalert/internal/model"
 )
 
 // Storage — контракт хранилища метрик, от которого зависит handler.

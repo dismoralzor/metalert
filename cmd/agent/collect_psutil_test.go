@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/dismoralzor/metalert/internal/model"
+	models "github.com/dismoralzor/metalert/internal/model"
 )
 
 // Проверяем, что имена CPUutilizationN генерируются по фактическому числу

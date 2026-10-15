@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/dismoralzor/metalert/internal/model"
+	models "github.com/dismoralzor/metalert/internal/model"
 )
 
 func gaugePtr(v float64) *float64 { return &v }

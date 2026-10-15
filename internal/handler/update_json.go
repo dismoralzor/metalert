@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/dismoralzor/metalert/internal/audit"
-	"github.com/dismoralzor/metalert/internal/model"
+	models "github.com/dismoralzor/metalert/internal/model"
 	"github.com/dismoralzor/metalert/internal/repository"
 )
 

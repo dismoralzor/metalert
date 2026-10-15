@@ -6,7 +6,7 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/dismoralzor/metalert/internal/model"
+	models "github.com/dismoralzor/metalert/internal/model"
 )
 
 // collectRuntimeMetrics - горутина A: собирает runtime.MemStats + RandomValue

@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/dismoralzor/metalert/internal/model"
+	models "github.com/dismoralzor/metalert/internal/model"
 )
 
 // SaveToFile пишет метрики атомарно: во временный файл в ТОЙ ЖЕ директории,

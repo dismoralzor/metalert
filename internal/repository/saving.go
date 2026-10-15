@@ -6,7 +6,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/dismoralzor/metalert/internal/logger"
-	"github.com/dismoralzor/metalert/internal/model"
+	models "github.com/dismoralzor/metalert/internal/model"
 )
 
 // SavingStorage пишет состояние в файл после каждой записи метрики - режим

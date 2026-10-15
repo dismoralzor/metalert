@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dismoralzor/metalert/internal/model"
+	models "github.com/dismoralzor/metalert/internal/model"
 )
 
 func TestRunAccumulator_FormsJobOnTick(t *testing.T) {

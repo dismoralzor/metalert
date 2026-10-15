@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/dismoralzor/metalert/internal/model"
+	models "github.com/dismoralzor/metalert/internal/model"
 )
 
 func TestMemStorage_UpdateGauge(t *testing.T) {

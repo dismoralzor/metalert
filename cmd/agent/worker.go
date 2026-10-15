@@ -4,7 +4,7 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/dismoralzor/metalert/internal/model"
+	models "github.com/dismoralzor/metalert/internal/model"
 )
 
 // sendFunc - сигнатура фактической отправки батча; в проде это sendBatch,

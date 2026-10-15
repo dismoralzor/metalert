@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dismoralzor/metalert/internal/model"
+	models "github.com/dismoralzor/metalert/internal/model"
 )
 
 // Пул из rateLimit воркеров, заваленный jobs'ами, не должен допускать больше

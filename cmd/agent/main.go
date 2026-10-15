@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"github.com/dismoralzor/metalert/internal/hash"
-	"github.com/dismoralzor/metalert/internal/model"
+	models "github.com/dismoralzor/metalert/internal/model"
 	"github.com/dismoralzor/metalert/internal/retry"
 )
 

@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 
-	"github.com/dismoralzor/metalert/internal/model"
+	models "github.com/dismoralzor/metalert/internal/model"
 )
 
 // sendMetric кладёт метрику в канал, но не блокируется навечно, если получатель

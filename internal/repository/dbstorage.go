@@ -8,7 +8,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/dismoralzor/metalert/internal/logger"
-	"github.com/dismoralzor/metalert/internal/model"
+	models "github.com/dismoralzor/metalert/internal/model"
 	"github.com/dismoralzor/metalert/internal/retry"
 )
 

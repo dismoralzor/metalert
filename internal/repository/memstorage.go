@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/dismoralzor/metalert/internal/model"
+	models "github.com/dismoralzor/metalert/internal/model"
 )
 
 // Мьютекс нужен, т.к. конкурентная запись в map без синхронизации паникует.

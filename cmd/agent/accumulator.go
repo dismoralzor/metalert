@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/dismoralzor/metalert/internal/model"
+	models "github.com/dismoralzor/metalert/internal/model"
 )
 
 // job - задание для воркера: готовый батч плюс тот кусок pollCount, за который
