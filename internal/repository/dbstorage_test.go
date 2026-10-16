@@ -3,8 +3,12 @@ package repository
 import (
 	"context"
 	"testing"
+	"time"
 
 	sqlmock "github.com/DATA-DOG/go-sqlmock"
+	"go.uber.org/zap"
+
+	"github.com/dismoralzor/metalert/internal/retry"
 )
 
 func newMockStorage(t *testing.T) (*DBStorage, sqlmock.Sqlmock) {
@@ -14,7 +18,9 @@ func newMockStorage(t *testing.T) (*DBStorage, sqlmock.Sqlmock) {
 		t.Fatalf("sqlmock.New: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
-	return NewDBStorage(db), mock
+	// Миллисекундная политика: тесты на retry не ждут реальные секунды.
+	policy := retry.Policy{Delays: []time.Duration{time.Millisecond, time.Millisecond, time.Millisecond}}
+	return NewDBStorage(db, policy, zap.NewNop()), mock
 }
 
 func TestDBStorage_UpdateGauge(t *testing.T) {

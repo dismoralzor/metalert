@@ -7,20 +7,23 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/dismoralzor/metalert/internal/logger"
 	models "github.com/dismoralzor/metalert/internal/model"
 	"github.com/dismoralzor/metalert/internal/retry"
 )
 
 // DBStorage реализует Storage поверх PostgreSQL: одна таблица metrics,
 // значение gauge/counter лежит в колонке value/delta в зависимости от type.
+// Политика повторов и логгер - явные зависимости (не глобальные).
 type DBStorage struct {
-	db *sql.DB
+	db    *sql.DB
+	retry retry.Policy
+	log   *zap.Logger
 }
 
-// NewDBStorage создаёт хранилище поверх уже открытого подключения db.
-func NewDBStorage(db *sql.DB) *DBStorage {
-	return &DBStorage{db: db}
+// NewDBStorage создаёт хранилище поверх уже открытого подключения db с заданной
+// политикой повторов и логгером.
+func NewDBStorage(db *sql.DB, policy retry.Policy, log *zap.Logger) *DBStorage {
+	return &DBStorage{db: db, retry: policy, log: log}
 }
 
 // UpdateGauge записывает (upsert) значение gauge-метрики в БД.
@@ -32,7 +35,7 @@ func NewDBStorage(db *sql.DB) *DBStorage {
 // ExecContext - отмена запроса клиентом обязана прервать реальный SQL-запрос,
 // а не только "текущую попытку" retry.
 func (s *DBStorage) UpdateGauge(ctx context.Context, name string, value float64) {
-	err := retry.Do(ctx, func() error {
+	err := s.retry.Do(ctx, func() error {
 		_, err := s.db.ExecContext(ctx,
 			`INSERT INTO metrics (id, type, value) VALUES ($1, 'gauge', $2)
 			 ON CONFLICT (id) DO UPDATE SET value = $2, type = 'gauge'`,
@@ -41,13 +44,13 @@ func (s *DBStorage) UpdateGauge(ctx context.Context, name string, value float64)
 		return err
 	}, retry.IsRetriablePG)
 	if err != nil {
-		logger.Log.Error("update gauge", zap.String("name", name), zap.Error(err))
+		s.log.Error("update gauge", zap.String("name", name), zap.Error(err))
 	}
 }
 
 // UpdateCounter прибавляет delta, а не заменяет значение - как и MemStorage.
 func (s *DBStorage) UpdateCounter(ctx context.Context, name string, delta int64) {
-	err := retry.Do(ctx, func() error {
+	err := s.retry.Do(ctx, func() error {
 		_, err := s.db.ExecContext(ctx,
 			`INSERT INTO metrics (id, type, delta) VALUES ($1, 'counter', $2)
 			 ON CONFLICT (id) DO UPDATE SET delta = metrics.delta + $2, type = 'counter'`,
@@ -56,14 +59,14 @@ func (s *DBStorage) UpdateCounter(ctx context.Context, name string, delta int64)
 		return err
 	}, retry.IsRetriablePG)
 	if err != nil {
-		logger.Log.Error("update counter", zap.String("name", name), zap.Error(err))
+		s.log.Error("update counter", zap.String("name", name), zap.Error(err))
 	}
 }
 
 // GetGauge возвращает значение gauge-метрики из БД и признак её наличия.
 func (s *DBStorage) GetGauge(ctx context.Context, name string) (float64, bool) {
 	var value sql.NullFloat64
-	err := retry.Do(ctx, func() error {
+	err := s.retry.Do(ctx, func() error {
 		return s.db.QueryRowContext(ctx,
 			`SELECT value FROM metrics WHERE id = $1 AND type = 'gauge'`,
 			name,
@@ -73,7 +76,7 @@ func (s *DBStorage) GetGauge(ctx context.Context, name string) (float64, bool) {
 		// sql.ErrNoRows - не retriable (IsRetriablePG вернёт false и выйдет сразу),
 		// но это штатный случай "метрика не найдена", логировать нечего.
 		if !errors.Is(err, sql.ErrNoRows) {
-			logger.Log.Error("get gauge", zap.String("name", name), zap.Error(err))
+			s.log.Error("get gauge", zap.String("name", name), zap.Error(err))
 		}
 		return 0, false
 	}
@@ -86,7 +89,7 @@ func (s *DBStorage) GetGauge(ctx context.Context, name string) (float64, bool) {
 // GetCounter возвращает значение counter-метрики из БД и признак её наличия.
 func (s *DBStorage) GetCounter(ctx context.Context, name string) (int64, bool) {
 	var delta sql.NullInt64
-	err := retry.Do(ctx, func() error {
+	err := s.retry.Do(ctx, func() error {
 		return s.db.QueryRowContext(ctx,
 			`SELECT delta FROM metrics WHERE id = $1 AND type = 'counter'`,
 			name,
@@ -94,7 +97,7 @@ func (s *DBStorage) GetCounter(ctx context.Context, name string) (int64, bool) {
 	}, retry.IsRetriablePG)
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
-			logger.Log.Error("get counter", zap.String("name", name), zap.Error(err))
+			s.log.Error("get counter", zap.String("name", name), zap.Error(err))
 		}
 		return 0, false
 	}
@@ -123,7 +126,7 @@ func (s *DBStorage) UpdateBatch(ctx context.Context, metrics []models.Metrics) e
 	// Exec), но лишние round-trip'ы и путаница, какое значение "победило".
 	aggregated := aggregateMetrics(metrics)
 
-	return retry.Do(ctx, func() error {
+	return s.retry.Do(ctx, func() error {
 		tx, err := s.db.BeginTx(ctx, nil)
 		if err != nil {
 			return err
@@ -194,7 +197,7 @@ func aggregateMetrics(metrics []models.Metrics) []models.Metrics {
 func (s *DBStorage) Metrics(ctx context.Context) []models.Metrics {
 	var result []models.Metrics
 
-	err := retry.Do(ctx, func() error {
+	err := s.retry.Do(ctx, func() error {
 		rows, err := s.db.QueryContext(ctx,
 			`SELECT id, type, value, delta FROM metrics`,
 		)
@@ -236,7 +239,7 @@ func (s *DBStorage) Metrics(ctx context.Context) []models.Metrics {
 	}, retry.IsRetriablePG)
 
 	if err != nil {
-		logger.Log.Error("list metrics", zap.Error(err))
+		s.log.Error("list metrics", zap.Error(err))
 		return nil
 	}
 

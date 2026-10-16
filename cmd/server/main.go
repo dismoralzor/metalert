@@ -22,16 +22,19 @@ import (
 	"github.com/dismoralzor/metalert/internal/handler"
 	"github.com/dismoralzor/metalert/internal/logger"
 	"github.com/dismoralzor/metalert/internal/repository"
+	"github.com/dismoralzor/metalert/internal/retry"
 )
 
 func main() {
 	cfg := parseFlags()
 
-	// Через стандартный log, а не logger.Log: до успешного Initialize
-	// в синглтоне лежит no-op логгер, который проглотил бы это сообщение.
-	if err := logger.Initialize(cfg.logLevel); err != nil {
+	// Логгер - явная зависимость: создаём здесь и прокидываем дальше. До этого
+	// момента об ошибках сообщаем стандартным log (zap ещё нет).
+	zlog, err := logger.New(cfg.logLevel)
+	if err != nil {
 		log.Fatal(err)
 	}
+	defer zlog.Sync()
 
 	// БД опциональна: пустой dsn - работаем как раньше, на памяти/файле. Но если dsn
 	// задан явно, а подключиться не удалось - это не повод тихо съехать на файловый
@@ -58,19 +61,31 @@ func main() {
 	// Старт приложения - осмысленного родительского контекста ещё нет
 	// (сигналы перехватим чуть ниже), поэтому Background - как и раньше
 	// для Ping выше.
-	storage, fileMode := selectStorage(context.Background(), cfg, db)
+	storage, fileMode := selectStorage(context.Background(), cfg, db, zlog)
 
 	// Аудитор (паттерн Наблюдатель): издатель + приёмники по конфигу.
 	// Подписчиков может не быть вовсе - тогда NotifyAll просто ничего не делает.
-	auditor := audit.NewSubject()
+	auditor := audit.NewSubject(zlog)
 	if cfg.auditFile != "" {
-		auditor.Subscribe(audit.NewFileObserver(cfg.auditFile))
-		logger.Log.Info("audit file observer enabled", zap.String("path", cfg.auditFile))
+		// Файл открывается в конструкторе: ошибка доступа должна валить старт
+		// сразу, а не всплывать на первом же событии аудита.
+		fileObs, err := audit.NewFileObserver(cfg.auditFile)
+		if err != nil {
+			log.Fatalf("open audit file: %v", err)
+		}
+		auditor.Subscribe(fileObs)
+		zlog.Info("audit file observer enabled", zap.String("path", cfg.auditFile))
 	}
 	if cfg.auditURL != "" {
 		auditor.Subscribe(audit.NewHTTPObserver(cfg.auditURL))
-		logger.Log.Info("audit http observer enabled", zap.String("url", cfg.auditURL))
+		zlog.Info("audit http observer enabled", zap.String("url", cfg.auditURL))
 	}
+	// Закрываем приёмники (например, файл) при остановке.
+	defer func() {
+		if err := auditor.Close(); err != nil {
+			zlog.Error("close auditor", zap.Error(err))
+		}
+	}()
 
 	updateHandler := handler.NewUpdateHandler(storage, auditor)
 	valueHandler := handler.NewValueHandler(storage)
@@ -84,7 +99,7 @@ func main() {
 	// Use до регистрации роутов: chi паникует, если middleware добавляют
 	// к роутеру, в котором уже объявлены маршруты.
 	// Логгер снаружи gzip: в лог попадает размер тела, реально ушедшего в сеть.
-	r.Use(logger.RequestLogger)
+	r.Use(logger.RequestLogger(zlog))
 	r.Use(handler.GzipMiddleware)
 	// ПОСЛЕ Gzip: агент считает подпись от НЕсжатого тела, значит и проверять
 	// её нужно уже после распаковки. При пустом cfg.key middleware прозрачен.
@@ -109,10 +124,10 @@ func main() {
 	saveNow := func(ctx context.Context) {
 		metrics := repository.Snapshot(ctx, storage)
 		if err := repository.SaveToFile(cfg.fileStoragePath, metrics); err != nil {
-			logger.Log.Error("save metrics", zap.Error(err))
+			zlog.Error("save metrics", zap.Error(err))
 			return
 		}
-		logger.Log.Info("metrics saved", zap.Int("count", len(metrics)))
+		zlog.Info("metrics saved", zap.Int("count", len(metrics)))
 	}
 
 	// NotifyContext - это signal.Notify и отмена контекста одним вызовом.
@@ -152,14 +167,14 @@ func main() {
 		defer cancel()
 
 		if err := srv.Shutdown(shutdownCtx); err != nil {
-			logger.Log.Error("shutdown", zap.Error(err))
+			zlog.Error("shutdown", zap.Error(err))
 		}
 	}()
 
-	logger.Log.Info("starting server", zap.String("addr", cfg.addr))
+	zlog.Info("starting server", zap.String("addr", cfg.addr))
 	// После Shutdown ListenAndServe возвращает ErrServerClosed - это штатный выход.
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		// log.Fatal (стандартный), а не logger.Log.Fatal: явный os.Exit(1) вместо
+		// Стандартный log.Fatal, а не zlog.Fatal: явный os.Exit(1) вместо
 		// того, чтобы полагаться на onFatal-хук zap-логгера. Это происходит ДО
 		// получения сигнала (например, "address already in use" при старте) -
 		// ctx ещё не отменён, а значит wg.Wait() ниже заблокировалась бы навсегда:
@@ -181,7 +196,7 @@ func main() {
 	select {
 	case <-waitDone:
 	case <-time.After(15 * time.Second):
-		logger.Log.Error("background goroutines did not stop in time, exiting anyway")
+		zlog.Error("background goroutines did not stop in time, exiting anyway")
 	}
 
 	if fileMode {
@@ -195,12 +210,12 @@ func main() {
 // fileMode сообщает вызывающей стороне, нужно ли поднимать тикер периодического
 // сохранения и graceful save в файл при остановке - эти механизмы не имеют смысла
 // для БД (сама персистентна) и для голой памяти (сохранять некуда).
-func selectStorage(ctx context.Context, cfg config, db *sql.DB) (storage repository.Storage, fileMode bool) {
+func selectStorage(ctx context.Context, cfg config, db *sql.DB, zlog *zap.Logger) (storage repository.Storage, fileMode bool) {
 	if cfg.dsn != "" {
 		if err := repository.RunMigrations(db); err != nil {
-			logger.Log.Fatal("run migrations", zap.Error(err))
+			zlog.Fatal("run migrations", zap.Error(err))
 		}
-		return repository.NewDBStorage(db), false
+		return repository.NewDBStorage(db, retry.DefaultPolicy(), zlog), false
 	}
 
 	if cfg.fileStoragePath != "" {
@@ -210,17 +225,17 @@ func selectStorage(ctx context.Context, cfg config, db *sql.DB) (storage reposit
 			metrics, err := repository.LoadFromFile(cfg.fileStoragePath)
 			if err != nil {
 				// Битый файл не должен мешать старту - поднимаемся с пустым хранилищем.
-				logger.Log.Error("restore metrics", zap.Error(err))
+				zlog.Error("restore metrics", zap.Error(err))
 			} else {
 				repository.Restore(ctx, storage, metrics)
-				logger.Log.Info("metrics restored", zap.Int("count", len(metrics)))
+				zlog.Info("metrics restored", zap.Int("count", len(metrics)))
 			}
 		}
 
 		// Оборачиваем ПОСЛЕ восстановления: иначе Restore сам вызвал бы запись
 		// в файл на каждую залитую метрику.
 		if cfg.storeInterval == 0 {
-			storage = repository.NewSavingStorage(storage, cfg.fileStoragePath)
+			storage = repository.NewSavingStorage(storage, cfg.fileStoragePath, zlog)
 		}
 
 		return storage, true

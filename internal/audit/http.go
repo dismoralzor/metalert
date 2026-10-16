@@ -51,3 +51,10 @@ func (o *HTTPObserver) Notify(e Event) error {
 	}
 	return nil
 }
+
+// Close освобождает простаивающие keep-alive соединения клиента. Вызывается
+// Subject.Close при остановке сервера.
+func (o *HTTPObserver) Close() error {
+	o.client.CloseIdleConnections()
+	return nil
+}

@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"go.uber.org/zap"
+
 	models "github.com/dismoralzor/metalert/internal/model"
 )
 
@@ -218,7 +220,7 @@ func TestSaveToFile_PreservesExistingFileOnFailure(t *testing.T) {
 // Синхронный режим: файл должен появиться сразу после записи метрики.
 func TestSavingStorage_WritesOnUpdate(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "metrics.json")
-	s := NewSavingStorage(NewMemStorage(), path)
+	s := NewSavingStorage(NewMemStorage(), path, zap.NewNop())
 
 	s.UpdateGauge(context.Background(), "Temperature", 23.5)
 

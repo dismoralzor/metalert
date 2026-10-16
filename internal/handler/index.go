@@ -11,11 +11,19 @@ import (
 	"github.com/dismoralzor/metalert/internal/repository"
 )
 
-// indexBufPool переиспользует буферы рендера между запросами: страница
-// собирается заново на каждый GET /, но сам буфер аллоцировать с нуля каждый
-// раз не нужно - на горячем пути это давало основную долю аллокаций.
+// indexScratch - переиспользуемые между запросами буферы рендера: сам буфер
+// страницы и вспомогательный слайс num для форматирования чисел через
+// strconv.Append* (чтобы не аллоцировать строку на каждую метрику).
+type indexScratch struct {
+	buf bytes.Buffer
+	num []byte
+}
+
+// indexBufPool переиспользует indexScratch между запросами: страница собирается
+// заново на каждый GET /, но буферы аллоцировать с нуля каждый раз не нужно -
+// на горячем пути это давало основную долю аллокаций.
 var indexBufPool = sync.Pool{
-	New: func() any { return new(bytes.Buffer) },
+	New: func() any { return new(indexScratch) },
 }
 
 // IndexHandler обслуживает GET / - HTML-страницу со списком всех метрик.
@@ -36,9 +44,10 @@ func (h *IndexHandler) Index(w http.ResponseWriter, r *http.Request) {
 	// строк таблицы и без рефлексии html/template. Имена метрик приходят извне,
 	// поэтому экранируем их через html.EscapeString (значения числовые -
 	// strconv даёт безопасный вывод). Структура страницы прежняя.
-	buf := indexBufPool.Get().(*bytes.Buffer)
-	buf.Reset()
-	defer indexBufPool.Put(buf)
+	sc := indexBufPool.Get().(*indexScratch)
+	sc.buf.Reset()
+	defer indexBufPool.Put(sc)
+	buf := &sc.buf
 
 	buf.WriteString("<!DOCTYPE html>\n<html>\n<head><title>Metrics</title></head>\n<body>\n<h1>Metrics</h1>\n<h2>Gauges</h2>\n<ul>\n")
 	for _, m := range metrics {
@@ -48,7 +57,10 @@ func (h *IndexHandler) Index(w http.ResponseWriter, r *http.Request) {
 		buf.WriteString("<li>")
 		buf.WriteString(html.EscapeString(m.ID))
 		buf.WriteString(": ")
-		buf.WriteString(strconv.FormatFloat(*m.Value, 'f', -1, 64))
+		// AppendFloat в переиспользуемый scratch вместо FormatFloat: не аллоцирует
+		// строку на каждую метрику.
+		sc.num = strconv.AppendFloat(sc.num[:0], *m.Value, 'f', -1, 64)
+		buf.Write(sc.num)
 		buf.WriteString("</li>\n")
 	}
 	buf.WriteString("</ul>\n<h2>Counters</h2>\n<ul>\n")
@@ -59,7 +71,8 @@ func (h *IndexHandler) Index(w http.ResponseWriter, r *http.Request) {
 		buf.WriteString("<li>")
 		buf.WriteString(html.EscapeString(m.ID))
 		buf.WriteString(": ")
-		buf.WriteString(strconv.FormatInt(*m.Delta, 10))
+		sc.num = strconv.AppendInt(sc.num[:0], *m.Delta, 10)
+		buf.Write(sc.num)
 		buf.WriteString("</li>\n")
 	}
 	buf.WriteString("</ul>\n</body>\n</html>")

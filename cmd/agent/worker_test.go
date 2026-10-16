@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"net/http"
 	"sync"
 	"testing"
 	"time"
@@ -23,7 +22,7 @@ func TestWorkerPool_RespectsRateLimit(t *testing.T) {
 		maxSeen int
 	)
 
-	fakeSend := func(ctx context.Context, client *http.Client, addr, key string, metrics []models.Metrics) bool {
+	fakeSend := func(ctx context.Context, metrics []models.Metrics) bool {
 		mu.Lock()
 		current++
 		if current > maxSeen {
@@ -50,7 +49,7 @@ func TestWorkerPool_RespectsRateLimit(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			runWorker(ctx, nil, "", "", jobsCh, resultsCh, fakeSend)
+			runWorker(ctx, jobsCh, resultsCh, fakeSend)
 		}()
 	}
 
@@ -93,7 +92,7 @@ func TestRunWorker_StopsOnContextCancel(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		runWorker(ctx, nil, "", "", jobsCh, resultsCh, func(context.Context, *http.Client, string, string, []models.Metrics) bool {
+		runWorker(ctx, jobsCh, resultsCh, func(context.Context, []models.Metrics) bool {
 			return true
 		})
 		close(done)

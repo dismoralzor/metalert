@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"log"
 	"time"
 
 	models "github.com/dismoralzor/metalert/internal/model"
@@ -34,6 +35,12 @@ type sendResult struct {
 // success=false через resultsCh, и аккумулятор ВОЗВРАЩАЕТ delta обратно в
 // pollCount - он попадёт в следующий батч вместе с новыми накопленными опросами,
 // а не потеряется.
+//
+// При ctx.Done() накопленное НЕ выбрасывается: если есть pending или ненулевой
+// pollCount, аккумулятор собирает финальный батч и делает одну попытку отправки
+// через sender.SendOnce (без retry) под отдельным коротким контекстом - основной
+// ctx уже отменён, поэтому его нельзя использовать для сетевого вызова. Ошибку
+// финальной отправки только логируем: процесс всё равно завершается.
 func runAccumulator(
 	ctx context.Context,
 	reportInterval time.Duration,
@@ -41,6 +48,7 @@ func runAccumulator(
 	jobsCh chan<- job,
 	resultsCh <-chan sendResult,
 	a *agent,
+	s *sender,
 ) {
 	defer close(jobsCh)
 
@@ -52,6 +60,7 @@ func runAccumulator(
 	for {
 		select {
 		case <-ctx.Done():
+			flushFinal(ctx, pending, a, s)
 			return
 
 		case m := <-metricsCh:
@@ -79,5 +88,31 @@ func runAccumulator(
 				return
 			}
 		}
+	}
+}
+
+// flushFinal отправляет накопленное при остановке агента. Делает это, только если
+// есть что отправлять (pending непустой или pollCount > 0), одной попыткой без
+// retry и под собственным коротким контекстом, т.к. переданный ctx уже отменён.
+func flushFinal(ctx context.Context, pending []models.Metrics, a *agent, s *sender) {
+	delta := a.pollCount.Swap(0)
+	if len(pending) == 0 && delta == 0 {
+		return
+	}
+	if s == nil {
+		return
+	}
+
+	d := delta
+	batch := append(pending, models.Metrics{ID: "PollCount", MType: models.Counter, Delta: &d})
+
+	// Отдельный контекст: основной ctx уже Done, но финальную отправку хочется
+	// успеть сделать. WithoutCancel отвязывает от отмены родителя, таймаут
+	// ограничивает ожидание.
+	sendCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+	defer cancel()
+
+	if err := s.SendOnce(sendCtx, batch); err != nil {
+		log.Printf("final send on shutdown: %v", err)
 	}
 }

@@ -5,7 +5,6 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/dismoralzor/metalert/internal/logger"
 	models "github.com/dismoralzor/metalert/internal/model"
 )
 
@@ -15,12 +14,14 @@ import (
 type SavingStorage struct {
 	Storage
 	path string
+	log  *zap.Logger
 }
 
 // NewSavingStorage оборачивает inner так, чтобы после каждой записи метрики
 // состояние синхронно сохранялось в файл path (режим STORE_INTERVAL=0).
-func NewSavingStorage(inner Storage, path string) *SavingStorage {
-	return &SavingStorage{Storage: inner, path: path}
+// log используется для сообщений об ошибках записи.
+func NewSavingStorage(inner Storage, path string, log *zap.Logger) *SavingStorage {
+	return &SavingStorage{Storage: inner, path: path, log: log}
 }
 
 // UpdateGauge записывает метрику во внутреннее хранилище и сохраняет файл.
@@ -48,6 +49,6 @@ func (s *SavingStorage) UpdateBatch(ctx context.Context, metrics []models.Metric
 // Ошибку записи логируем, но запрос не валим: метрика уже принята в память.
 func (s *SavingStorage) save(ctx context.Context) {
 	if err := SaveToFile(s.path, Snapshot(ctx, s.Storage)); err != nil {
-		logger.Log.Error("sync save", zap.Error(err))
+		s.log.Error("sync save", zap.Error(err))
 	}
 }

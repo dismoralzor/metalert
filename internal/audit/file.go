@@ -7,21 +7,27 @@ import (
 )
 
 // FileObserver пишет события аудита в файл по одной JSON-строке на событие
-// (формат JSONL). Собственный мьютекс защищает от переплетения байтов, если
-// два параллельных запроса вызовут Notify одновременно.
+// (формат JSONL). Файл открывается один раз в конструкторе и держится открытым;
+// мьютекс защищает от переплетения байтов, если два параллельных запроса вызовут
+// Notify одновременно.
 type FileObserver struct {
-	mu   sync.Mutex
-	path string
+	mu sync.Mutex
+	f  *os.File
 }
 
-// NewFileObserver создаёт приёмник, дописывающий события в файл path.
-func NewFileObserver(path string) *FileObserver {
-	return &FileObserver{path: path}
+// NewFileObserver открывает (создаёт при отсутствии) файл path на дозапись и
+// возвращает приёмник. Ошибку открытия возвращаем сразу - вызывающая сторона
+// (main) падает на старте, а не на первом событии.
+func NewFileObserver(path string) (*FileObserver, error) {
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return nil, err
+	}
+	return &FileObserver{f: f}, nil
 }
 
-// Notify сериализует событие в JSON и дописывает строку + '\n' в конец файла.
-// O_APPEND гарантирует запись в хвост даже при нескольких открытиях файла,
-// мьютекс - атомарность пары "сериализация + запись" внутри процесса.
+// Notify сериализует событие в JSON и дописывает строку + '\n' в уже открытый
+// файл под мьютексом (O_APPEND гарантирует запись в хвост).
 func (o *FileObserver) Notify(e Event) error {
 	data, err := json.Marshal(e)
 	if err != nil {
@@ -32,14 +38,13 @@ func (o *FileObserver) Notify(e Event) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 
-	f, err := os.OpenFile(o.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
+	_, err = o.f.Write(data)
+	return err
+}
 
-	if _, err := f.Write(data); err != nil {
-		return err
-	}
-	return nil
+// Close закрывает файл. Вызывается Subject.Close при остановке сервера.
+func (o *FileObserver) Close() error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.f.Close()
 }

@@ -107,4 +107,5 @@ $ go tool pprof -top -sample_index=alloc_objects -diff_base=profiles/base.pprof 
    -247814  0.19% 95.09% -123090121 95.53%  (*IndexHandler).Index
 ```
 
-Профили `profiles/base.pprof` и `profiles/result.pprof` закоммичены для ревью.
+Профили `profiles/base.pprof` и `profiles/result.pprof` генерируются командами
+выше в каталог `profiles/` (он в `.gitignore` и в репозитории не хранится).

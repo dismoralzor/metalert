@@ -3,24 +3,13 @@ package repository
 import (
 	"context"
 	"testing"
-	"time"
 
 	sqlmock "github.com/DATA-DOG/go-sqlmock"
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5/pgconn"
 
 	models "github.com/dismoralzor/metalert/internal/model"
-	"github.com/dismoralzor/metalert/internal/retry"
 )
-
-// withShortRetryDelays подменяет retry.Delays на короткие интервалы на время
-// теста, чтобы не ждать реальные 1s+3s+5s.
-func withShortRetryDelays(t *testing.T) {
-	t.Helper()
-	original := retry.Delays
-	retry.Delays = []time.Duration{time.Millisecond, time.Millisecond, time.Millisecond}
-	t.Cleanup(func() { retry.Delays = original })
-}
 
 func connExceptionErr() error {
 	return &pgconn.PgError{Code: pgerrcode.ConnectionFailure}
@@ -28,7 +17,6 @@ func connExceptionErr() error {
 
 // Class 08 (Connection Exception) - retriable: второй Exec должен пройти без ошибки.
 func TestDBStorage_UpdateGauge_RetriesOnConnectionException(t *testing.T) {
-	withShortRetryDelays(t)
 	s, mock := newMockStorage(t)
 
 	mock.ExpectExec(`INSERT INTO metrics \(id, type, value\) VALUES \(\$1, 'gauge', \$2\)`).
@@ -48,7 +36,6 @@ func TestDBStorage_UpdateGauge_RetriesOnConnectionException(t *testing.T) {
 // Ошибка вне Class 08 (например, нарушение constraint) - НЕ retriable,
 // повторного Exec быть не должно.
 func TestDBStorage_UpdateGauge_DoesNotRetryOnNonConnectionError(t *testing.T) {
-	withShortRetryDelays(t)
 	s, mock := newMockStorage(t)
 
 	mock.ExpectExec(`INSERT INTO metrics \(id, type, value\) VALUES \(\$1, 'gauge', \$2\)`).
@@ -66,7 +53,6 @@ func TestDBStorage_UpdateGauge_DoesNotRetryOnNonConnectionError(t *testing.T) {
 // перезапустить ВСЮ транзакцию (новый BeginTx), а не пытаться доExec'ать
 // в уже мёртвую tx.
 func TestDBStorage_UpdateBatch_RetriesWholeTransaction(t *testing.T) {
-	withShortRetryDelays(t)
 	s, mock := newMockStorage(t)
 
 	// Первая попытка: транзакция открылась, но упала на первом Exec.

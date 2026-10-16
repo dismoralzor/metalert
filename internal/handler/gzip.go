@@ -4,6 +4,7 @@ import (
 	"compress/gzip"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 )
 
@@ -90,13 +91,47 @@ func (c *compressReader) Close() error {
 	return c.zr.Close()
 }
 
+// acceptsGzip сообщает, просит ли клиент gzip в заголовке Accept-Encoding.
+// Заголовок - список кодировок через запятую, у каждой могут быть параметры
+// после ";" (в том числе вес q). gzip считается принятым, если среди токенов
+// есть "gzip" (без учёта регистра) и он не отключён явным q=0. Подстрока здесь
+// не годится: "x-gzip" или вес q=0 строковый поиск отличить не может.
+func acceptsGzip(header string) bool {
+	for _, part := range strings.Split(header, ",") {
+		token, params, _ := strings.Cut(strings.TrimSpace(part), ";")
+		if !strings.EqualFold(strings.TrimSpace(token), "gzip") {
+			continue
+		}
+		if quality(params) == 0 {
+			return false
+		}
+		return true
+	}
+	return false
+}
+
+// quality извлекает вес q из параметров токена Accept-Encoding; по умолчанию
+// (параметр отсутствует или не разобрался) вес равен 1.
+func quality(params string) float64 {
+	for _, p := range strings.Split(params, ";") {
+		k, v, ok := strings.Cut(strings.TrimSpace(p), "=")
+		if !ok || !strings.EqualFold(strings.TrimSpace(k), "q") {
+			continue
+		}
+		if q, err := strconv.ParseFloat(strings.TrimSpace(v), 64); err == nil {
+			return q
+		}
+	}
+	return 1
+}
+
 // GzipMiddleware прозрачно сжимает ответ и распаковывает запрос - хендлеры
 // работают с обычными w и r.
 func GzipMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ow := w
 
-		if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+		if acceptsGzip(r.Header.Get("Accept-Encoding")) {
 			cw := newCompressWriter(w)
 			ow = cw
 			defer cw.Close()

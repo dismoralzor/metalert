@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"go.uber.org/zap"
 )
 
 // fakeObserver - подставной приёмник для проверки рассылки Subject.
@@ -24,7 +26,10 @@ func (f *fakeObserver) Notify(e Event) error {
 
 func TestFileObserver_Notify(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "audit.log")
-	obs := NewFileObserver(path)
+	obs, err := NewFileObserver(path)
+	if err != nil {
+		t.Fatalf("NewFileObserver: %v", err)
+	}
 
 	ev1 := Event{TS: 100, Metrics: []string{"Alloc"}, IPAddress: "1.2.3.4"}
 	ev2 := Event{TS: 200, Metrics: []string{"PollCount", "Random"}, IPAddress: "5.6.7.8"}
@@ -34,6 +39,10 @@ func TestFileObserver_Notify(t *testing.T) {
 	}
 	if err := obs.Notify(ev2); err != nil {
 		t.Fatalf("Notify ev2: %v", err)
+	}
+	// Закрываем до чтения: файл держится открытым до Close.
+	if err := obs.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
 	}
 
 	f, err := os.Open(path)
@@ -109,7 +118,7 @@ func TestHTTPObserver_Notify(t *testing.T) {
 
 func TestSubject_NotifyAll(t *testing.T) {
 	t.Run("single observer receives event", func(t *testing.T) {
-		s := NewSubject()
+		s := NewSubject(zap.NewNop())
 		obs := &fakeObserver{}
 		s.Subscribe(obs)
 
@@ -122,7 +131,7 @@ func TestSubject_NotifyAll(t *testing.T) {
 	})
 
 	t.Run("all observers receive event", func(t *testing.T) {
-		s := NewSubject()
+		s := NewSubject(zap.NewNop())
 		a, b := &fakeObserver{}, &fakeObserver{}
 		s.Subscribe(a)
 		s.Subscribe(b)
@@ -135,7 +144,7 @@ func TestSubject_NotifyAll(t *testing.T) {
 	})
 
 	t.Run("error in one observer does not stop the rest", func(t *testing.T) {
-		s := NewSubject()
+		s := NewSubject(zap.NewNop())
 		bad := &fakeObserver{err: io.ErrClosedPipe}
 		good := &fakeObserver{}
 		s.Subscribe(bad)

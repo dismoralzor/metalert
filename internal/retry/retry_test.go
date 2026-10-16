@@ -7,19 +7,18 @@ import (
 	"time"
 )
 
-// withShortDelays подменяет Delays на короткие интервалы на время теста
-// и восстанавливает исходные - иначе тест на "исчерпание попыток" ждал бы
-// реальные 1s+3s+5s = 9s.
-func withShortDelays(t *testing.T) {
-	t.Helper()
-	original := Delays
-	Delays = []time.Duration{time.Millisecond, time.Millisecond, time.Millisecond}
-	t.Cleanup(func() { Delays = original })
+// shortPolicy - политика с миллисекундными паузами: тест на "исчерпание попыток"
+// не должен ждать реальные 1s+3s+5s. Каждый тест создаёт свою - общего
+// изменяемого состояния нет, поэтому тесты безопасно идут через t.Parallel.
+func shortPolicy() Policy {
+	return Policy{Delays: []time.Duration{time.Millisecond, time.Millisecond, time.Millisecond}}
 }
 
 func TestDo_SucceedsFirstTry(t *testing.T) {
+	t.Parallel()
+
 	calls := 0
-	err := Do(context.Background(), func() error {
+	err := shortPolicy().Do(context.Background(), func() error {
 		calls++
 		return nil
 	}, func(error) bool { return true })
@@ -33,11 +32,11 @@ func TestDo_SucceedsFirstTry(t *testing.T) {
 }
 
 func TestDo_SucceedsAfterRetry(t *testing.T) {
-	withShortDelays(t)
+	t.Parallel()
 
 	retriableErr := errors.New("temporary")
 	calls := 0
-	err := Do(context.Background(), func() error {
+	err := shortPolicy().Do(context.Background(), func() error {
 		calls++
 		if calls < 3 {
 			return retriableErr
@@ -54,9 +53,11 @@ func TestDo_SucceedsAfterRetry(t *testing.T) {
 }
 
 func TestDo_NonRetriableReturnsImmediately(t *testing.T) {
+	t.Parallel()
+
 	nonRetriableErr := errors.New("permanent")
 	calls := 0
-	err := Do(context.Background(), func() error {
+	err := shortPolicy().Do(context.Background(), func() error {
 		calls++
 		return nonRetriableErr
 	}, func(error) bool { return false })
@@ -70,11 +71,12 @@ func TestDo_NonRetriableReturnsImmediately(t *testing.T) {
 }
 
 func TestDo_ExhaustsRetries(t *testing.T) {
-	withShortDelays(t)
+	t.Parallel()
 
+	policy := shortPolicy()
 	retriableErr := errors.New("always fails")
 	calls := 0
-	err := Do(context.Background(), func() error {
+	err := policy.Do(context.Background(), func() error {
 		calls++
 		return retriableErr
 	}, func(error) bool { return true })
@@ -83,15 +85,38 @@ func TestDo_ExhaustsRetries(t *testing.T) {
 		t.Fatalf("Do() error = %v, want %v", err, retriableErr)
 	}
 	// Основной вызов + len(Delays) повторов.
-	wantCalls := 1 + len(Delays)
+	wantCalls := 1 + len(policy.Delays)
 	if calls != wantCalls {
 		t.Errorf("calls = %d, want %d", calls, wantCalls)
 	}
 }
 
+func TestDo_EmptyPolicyDoesNotRetry(t *testing.T) {
+	t.Parallel()
+
+	// Пустая политика (без Delays) => ровно одна попытка, даже если ошибка
+	// retriable - так пользуется финальная отправка агента при shutdown.
+	retriableErr := errors.New("temporary")
+	calls := 0
+	err := Policy{}.Do(context.Background(), func() error {
+		calls++
+		return retriableErr
+	}, func(error) bool { return true })
+
+	if !errors.Is(err, retriableErr) {
+		t.Fatalf("Do() error = %v, want %v", err, retriableErr)
+	}
+	if calls != 1 {
+		t.Errorf("calls = %d, want 1 (empty policy = single attempt)", calls)
+	}
+}
+
 func TestDo_ContextCancelInterruptsWait(t *testing.T) {
-	// Delays намеренно НЕ укорачиваем: тест проверяет именно то, что отмена
-	// контекста прерывает ожидание раньше полного delay, а не то, что delay короткий.
+	t.Parallel()
+
+	// Delays намеренно реальные: тест проверяет, что отмена контекста прерывает
+	// ожидание раньше полного delay, а не то, что delay короткий.
+	policy := DefaultPolicy()
 	ctx, cancel := context.WithCancel(context.Background())
 
 	retriableErr := errors.New("temporary")
@@ -99,7 +124,7 @@ func TestDo_ContextCancelInterruptsWait(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- Do(ctx, func() error {
+		done <- policy.Do(ctx, func() error {
 			calls++
 			return retriableErr
 		}, func(error) bool { return true })

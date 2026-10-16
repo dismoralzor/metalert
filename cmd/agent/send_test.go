@@ -12,32 +12,27 @@ import (
 	"github.com/dismoralzor/metalert/internal/retry"
 )
 
-// withShortRetryDelays подменяет retry.Delays на короткие интервалы на время
-// теста, чтобы не ждать реальные 1s+3s+5s при проверке retriable-путей.
-func withShortRetryDelays(t *testing.T) {
-	t.Helper()
-	original := retry.Delays
-	retry.Delays = []time.Duration{time.Millisecond, time.Millisecond, time.Millisecond}
-	t.Cleanup(func() { retry.Delays = original })
+// shortPolicy - политика с миллисекундными паузами: тесты на retry не должны
+// ждать реальные 1s+3s+5s. Своя на каждый тест, без общего состояния.
+func shortPolicy() retry.Policy {
+	return retry.Policy{Delays: []time.Duration{time.Millisecond, time.Millisecond, time.Millisecond}}
 }
 
-func TestSendBatch_2xxIsSuccess(t *testing.T) {
+func TestSender_2xxIsSuccess(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
 
-	ok := sendBatch(context.Background(), srv.Client(), srv.Listener.Addr().String(), "", []models.Metrics{})
-	if !ok {
-		t.Error("sendBatch() = false, want true for 200 response")
+	s := newSender(srv.Client(), srv.Listener.Addr().String(), "", shortPolicy())
+	if !s.Send(context.Background(), []models.Metrics{}) {
+		t.Error("Send() = false, want true for 200 response")
 	}
 }
 
 // Раньше client.Do возвращал err == nil для любого HTTP-ответа, включая 500,
-// и sendBatch молча считал это успехом - батч (и pollDelta) терялся.
-func TestSendBatch_5xxIsFailureAndRetries(t *testing.T) {
-	withShortRetryDelays(t)
-
+// и отправка молча считалась успехом - батч (и pollDelta) терялся.
+func TestSender_5xxIsFailureAndRetries(t *testing.T) {
 	var attempts int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt32(&attempts, 1)
@@ -45,22 +40,21 @@ func TestSendBatch_5xxIsFailureAndRetries(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	ok := sendBatch(context.Background(), srv.Client(), srv.Listener.Addr().String(), "", []models.Metrics{})
-	if ok {
-		t.Error("sendBatch() = true, want false for 500 response")
+	policy := shortPolicy()
+	s := newSender(srv.Client(), srv.Listener.Addr().String(), "", policy)
+	if s.Send(context.Background(), []models.Metrics{}) {
+		t.Error("Send() = true, want false for 500 response")
 	}
 
-	want := int32(1 + len(retry.Delays))
+	want := int32(1 + len(policy.Delays))
 	if got := atomic.LoadInt32(&attempts); got != want {
-		t.Errorf("attempts = %d, want %d (основной запрос + %d повтора на 5xx)", got, want, len(retry.Delays))
+		t.Errorf("attempts = %d, want %d (основной запрос + %d повтора на 5xx)", got, want, len(policy.Delays))
 	}
 }
 
-// 4xx - ошибка самого запроса, повтор её не исправит: sendBatch должен
-// вернуть false с ОДНОЙ попытки, не тратя время на retry.
-func TestSendBatch_4xxIsFailureWithoutRetry(t *testing.T) {
-	withShortRetryDelays(t)
-
+// 4xx - ошибка самого запроса, повтор её не исправит: Send должен вернуть false
+// с ОДНОЙ попытки, не тратя время на retry.
+func TestSender_4xxIsFailureWithoutRetry(t *testing.T) {
 	var attempts int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt32(&attempts, 1)
@@ -68,9 +62,9 @@ func TestSendBatch_4xxIsFailureWithoutRetry(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	ok := sendBatch(context.Background(), srv.Client(), srv.Listener.Addr().String(), "", []models.Metrics{})
-	if ok {
-		t.Error("sendBatch() = true, want false for 400 response")
+	s := newSender(srv.Client(), srv.Listener.Addr().String(), "", shortPolicy())
+	if s.Send(context.Background(), []models.Metrics{}) {
+		t.Error("Send() = true, want false for 400 response")
 	}
 
 	if got := atomic.LoadInt32(&attempts); got != 1 {
@@ -78,11 +72,28 @@ func TestSendBatch_4xxIsFailureWithoutRetry(t *testing.T) {
 	}
 }
 
-// Интеграция с worker/accumulator: неудачная отправка (5xx) не должна терять
-// pollDelta - runWorker сообщает об этом через resultsCh, а не проглатывает.
-func TestSendBatch_FailureSurfacesToWorkerResult(t *testing.T) {
-	withShortRetryDelays(t)
+// SendOnce делает ровно одну попытку даже на retriable-ошибку (5xx) - это путь
+// финальной отправки при shutdown.
+func TestSender_SendOnceDoesNotRetry(t *testing.T) {
+	var attempts int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&attempts, 1)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
 
+	s := newSender(srv.Client(), srv.Listener.Addr().String(), "", shortPolicy())
+	if err := s.SendOnce(context.Background(), []models.Metrics{}); err == nil {
+		t.Error("SendOnce() = nil, want error for 500 response")
+	}
+	if got := atomic.LoadInt32(&attempts); got != 1 {
+		t.Errorf("attempts = %d, want 1 (SendOnce без повторов)", got)
+	}
+}
+
+// Интеграция с worker: неудачная отправка (5xx) не должна терять pollDelta -
+// runWorker сообщает об этом через resultsCh, а не проглатывает.
+func TestSender_FailureSurfacesToWorkerResult(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
@@ -94,8 +105,8 @@ func TestSendBatch_FailureSurfacesToWorkerResult(t *testing.T) {
 	jobsCh := make(chan job, 1)
 	resultsCh := make(chan sendResult, 1)
 
-	client := srv.Client()
-	go runWorker(ctx, client, srv.Listener.Addr().String(), "", jobsCh, resultsCh, sendBatch)
+	s := newSender(srv.Client(), srv.Listener.Addr().String(), "", shortPolicy())
+	go runWorker(ctx, jobsCh, resultsCh, s.Send)
 
 	jobsCh <- job{metrics: []models.Metrics{}, pollDelta: 7}
 	close(jobsCh)

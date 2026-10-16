@@ -3,13 +3,7 @@
 package main
 
 import (
-	"bytes"
-	"compress/gzip"
 	"context"
-	"encoding/json"
-	"fmt"
-	"io"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -18,7 +12,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/dismoralzor/metalert/internal/hash"
 	models "github.com/dismoralzor/metalert/internal/model"
 	"github.com/dismoralzor/metalert/internal/retry"
 )
@@ -33,88 +26,6 @@ import (
 // Swap(0), без надобности в отдельной блокировке.
 type agent struct {
 	pollCount atomic.Int64
-}
-
-// sendBatch отправляет весь батч метрик одним JSON-массивом, сжатым gzip,
-// на POST /updates/ - вместо отдельного запроса на каждую метрику.
-//
-// Порядок важен: подпись считается от СЫРОГО JSON, ДО gzip - сервер распаковывает
-// тело раньше, чем проверяет HashSHA256, значит и агент обязан подписывать то же,
-// несжатое, тело. При пустом key заголовок вообще не добавляется - поведение как
-// до инкремента.
-//
-// Сетевую часть (сам POST) оборачиваем в retry.Do: если сервер временно
-// недоступен (connection refused, обрыв, таймаут), повторяем запрос ещё
-// до 3 раз с паузами 1s/3s/5s. Маршалинг, подпись и gzip делаем один раз ДО
-// retry - они детерминированы, повторять их не за чем, но тело запроса на
-// каждую попытку пересобираем заново из уже сжатых байт: bytes.Reader,
-// в отличие от bytes.Buffer, http-клиент "съедает" при первом же чтении.
-func sendBatch(ctx context.Context, client *http.Client, addr, key string, metrics []models.Metrics) bool {
-	body, err := json.Marshal(metrics)
-	if err != nil {
-		log.Printf("marshal batch: %v", err)
-		return false
-	}
-
-	var signature string
-	if key != "" {
-		signature = hash.Compute(body, key)
-	}
-
-	var compressed bytes.Buffer
-	zw := gzip.NewWriter(&compressed)
-	if _, err := zw.Write(body); err != nil {
-		log.Printf("compress batch: %v", err)
-		return false
-	}
-	// Close до отправки, а не через defer: он дописывает хвост gzip-потока,
-	// без него сервер получит обрезанные данные.
-	if err := zw.Close(); err != nil {
-		log.Printf("compress batch: %v", err)
-		return false
-	}
-	compressedBody := compressed.Bytes()
-
-	url := fmt.Sprintf("http://%s/updates/", addr)
-
-	err = retry.Do(ctx, func() error {
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(compressedBody))
-		if err != nil {
-			return err
-		}
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Content-Encoding", "gzip")
-		if signature != "" {
-			req.Header.Set("HashSHA256", signature)
-		}
-
-		resp, err := client.Do(req)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		// Дочитываем тело ДО Close - иначе транспорт не может переиспользовать
-		// TCP-соединение (keep-alive) и на каждый запрос плодится новый коннект.
-		// В любой ветке (успех/не-2xx) - серверу всё равно нужно вычитать ответ,
-		// не только в "счастливом" пути.
-		io.Copy(io.Discard, resp.Body)
-
-		// client.Do возвращает err только при сбое транспорта - код ответа
-		// сервера (например 500 или 400) сюда не попадает и должен быть
-		// проверен отдельно, иначе любой "успешный" HTTP-ответ (даже с ошибкой
-		// на сервере) считался бы удачной отправкой и pollDelta не вернулся
-		// бы в счётчик при неудаче.
-		if resp.StatusCode < http.StatusOK || resp.StatusCode > 299 {
-			return &retry.HTTPStatusError{StatusCode: resp.StatusCode}
-		}
-		return nil
-	}, retry.IsRetriableNet)
-
-	if err != nil {
-		log.Printf("send batch: %v", err)
-		return false
-	}
-	return true
 }
 
 func main() {
@@ -134,6 +45,9 @@ func main() {
 
 	a := &agent{}
 	client := &http.Client{Timeout: 5 * time.Second}
+	// sender делят воркеры (обычная отправка с retry) и финальный flush
+	// аккумулятора при shutdown (одна попытка без retry).
+	s := newSender(client, cfg.addr, cfg.key, retry.DefaultPolicy())
 
 	// metricsCh - выход горутин A и B, вход аккумулятора. jobsCh/resultsCh -
 	// обвязка между аккумулятором и пулом воркеров. Буферы небольшие: достаточно
@@ -163,7 +77,7 @@ func main() {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		runAccumulator(ctx, cfg.reportInterval, metricsCh, jobsCh, resultsCh, a)
+		runAccumulator(ctx, cfg.reportInterval, metricsCh, jobsCh, resultsCh, a, s)
 	}()
 
 	// Пул воркеров: не более cfg.rateLimit одновременных исходящих запросов.
@@ -171,7 +85,7 @@ func main() {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			runWorker(ctx, client, cfg.addr, cfg.key, jobsCh, resultsCh, sendBatch)
+			runWorker(ctx, jobsCh, resultsCh, s.Send)
 		}()
 	}
 
