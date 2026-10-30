@@ -14,6 +14,9 @@
 # Профили pprof: генерируются бенчмарками по требованию, в репозитории не храним.
 profiles/*.pprof
 
+# Собранные бинарники (например, ./cmd/staticlint).
+bin/
+
 # Binaries
 cmd/agent/main
 cmd/agent/agent

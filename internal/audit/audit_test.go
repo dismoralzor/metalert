@@ -34,14 +34,14 @@ func TestFileObserver_Notify(t *testing.T) {
 	ev1 := Event{TS: 100, Metrics: []string{"Alloc"}, IPAddress: "1.2.3.4"}
 	ev2 := Event{TS: 200, Metrics: []string{"PollCount", "Random"}, IPAddress: "5.6.7.8"}
 
-	if err := obs.Notify(ev1); err != nil {
+	if err = obs.Notify(ev1); err != nil {
 		t.Fatalf("Notify ev1: %v", err)
 	}
-	if err := obs.Notify(ev2); err != nil {
+	if err = obs.Notify(ev2); err != nil {
 		t.Fatalf("Notify ev2: %v", err)
 	}
 	// Закрываем до чтения: файл держится открытым до Close.
-	if err := obs.Close(); err != nil {
+	if err = obs.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
 

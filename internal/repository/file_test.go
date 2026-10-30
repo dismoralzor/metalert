@@ -196,7 +196,7 @@ func TestSaveToFile_PreservesExistingFileOnFailure(t *testing.T) {
 	// os.Mkdir на месте занятого файла не сработает - вместо этого проверяем
 	// поведение через marshal-ошибку: math.Inf не кодируется в JSON.
 	bad := []models.Metrics{{ID: "Bad", MType: models.Gauge, Value: gaugePtr(math.Inf(1))}}
-	if err := SaveToFile(path, bad); err == nil {
+	if err = SaveToFile(path, bad); err == nil {
 		t.Fatal("SaveToFile() error = nil, want error (marshal of +Inf must fail)")
 	}
 
