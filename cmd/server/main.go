@@ -2,6 +2,8 @@
 // JSON-протоколы), хранит их в памяти/файле/PostgreSQL и отдаёт по запросу.
 package main
 
+//go:generate go run github.com/dismoralzor/metalert/cmd/reset
+
 import (
 	"context"
 	"database/sql"
