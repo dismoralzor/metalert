@@ -4,6 +4,8 @@ package main
 
 import (
 	"context"
+	"crypto/rsa"
+	"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -13,6 +15,7 @@ import (
 	"time"
 
 	"github.com/dismoralzor/metalert/internal/buildinfo"
+	"github.com/dismoralzor/metalert/internal/crypto"
 	models "github.com/dismoralzor/metalert/internal/model"
 	"github.com/dismoralzor/metalert/internal/retry"
 )
@@ -47,6 +50,17 @@ func main() {
 
 	cfg := parseFlags()
 
+	// Публичный ключ шифрования загружаем один раз при старте. Путь задан, но
+	// ключ не читается/не парсится - фатальная ошибка старта.
+	var cryptoKey *rsa.PublicKey
+	if cfg.cryptoKey != "" {
+		var err error
+		cryptoKey, err = crypto.LoadPublicKey(cfg.cryptoKey)
+		if err != nil {
+			log.Fatalf("load crypto key: %v", err)
+		}
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -63,7 +77,7 @@ func main() {
 	client := &http.Client{Timeout: 5 * time.Second}
 	// sender делят воркеры (обычная отправка с retry) и финальный flush
 	// аккумулятора при shutdown (одна попытка без retry).
-	s := newSender(client, cfg.addr, cfg.key, retry.DefaultPolicy())
+	s := newSender(client, cfg.addr, cfg.key, cryptoKey, retry.DefaultPolicy())
 
 	// metricsCh - выход горутин A и B, вход аккумулятора. jobsCh/resultsCh -
 	// обвязка между аккумулятором и пулом воркеров. Буферы небольшие: достаточно

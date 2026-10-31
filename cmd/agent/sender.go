@@ -4,30 +4,40 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/rsa"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 
+	"github.com/dismoralzor/metalert/internal/crypto"
 	"github.com/dismoralzor/metalert/internal/hash"
 	models "github.com/dismoralzor/metalert/internal/model"
 	"github.com/dismoralzor/metalert/internal/retry"
 )
 
+// encryptedHeader - признак того, что тело запроса зашифровано (см. сервер).
+const encryptedHeader = "X-Content-Encrypted"
+
 // sender сворачивает всё, что нужно для отправки батча: HTTP-клиент, адрес
-// сервера, ключ подписи и политику повторов. Один экземпляр делят воркеры и
-// финальная отправка при shutdown.
+// сервера, ключ подписи, публичный ключ шифрования и политику повторов. Один
+// экземпляр делят воркеры и финальная отправка при shutdown.
+//
+// cryptoKey (*rsa.PublicKey) безопасен для конкурентного использования, поэтому
+// его можно держать один на всех воркеров.
 type sender struct {
-	client *http.Client
-	addr   string
-	key    string
-	policy retry.Policy
+	client    *http.Client
+	addr      string
+	key       string
+	cryptoKey *rsa.PublicKey
+	policy    retry.Policy
 }
 
-// newSender создаёт отправитель с заданной политикой повторов.
-func newSender(client *http.Client, addr, key string, policy retry.Policy) *sender {
-	return &sender{client: client, addr: addr, key: key, policy: policy}
+// newSender создаёт отправитель с заданной политикой повторов. cryptoKey == nil
+// означает, что шифрование выключено (поведение как в iter23).
+func newSender(client *http.Client, addr, key string, cryptoKey *rsa.PublicKey, policy retry.Policy) *sender {
+	return &sender{client: client, addr: addr, key: key, cryptoKey: cryptoKey, policy: policy}
 }
 
 // Send отправляет батч с обычной политикой повторов. Возвращает true при успехе;
@@ -69,20 +79,35 @@ func (s *sender) send(ctx context.Context, policy retry.Policy, metrics []models
 
 	var compressed bytes.Buffer
 	zw := gzip.NewWriter(&compressed)
-	if _, err := zw.Write(body); err != nil {
+	if _, err = zw.Write(body); err != nil {
 		return fmt.Errorf("compress batch: %w", err)
 	}
 	// Close до отправки: он дописывает хвост gzip-потока, без него сервер получит
 	// обрезанные данные.
-	if err := zw.Close(); err != nil {
+	if err = zw.Close(); err != nil {
 		return fmt.Errorf("compress batch: %w", err)
 	}
-	compressedBody := compressed.Bytes()
+	body = compressed.Bytes()
+
+	// Шифрование - САМЫЙ ВНЕШНИЙ слой, последним шагом после gzip и подписи.
+	// Делаем его ОДИН раз до цикла повторов (иначе каждая попытка перешифровывала
+	// бы тело заново). Заголовки Content-Encoding/HashSHA256 не трогаем: они
+	// описывают внутреннее, расшифрованное тело.
+	encrypted := false
+	if s.cryptoKey != nil {
+		body, err = crypto.Encrypt(s.cryptoKey, body)
+		if err != nil {
+			return fmt.Errorf("encrypt batch: %w", err)
+		}
+		encrypted = true
+	}
 
 	url := fmt.Sprintf("http://%s/updates/", s.addr)
 
 	return policy.Do(ctx, func() error {
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(compressedBody))
+		// Новый Reader на каждую попытку: один Reader http-клиент вычитывает при
+		// первом же запросе, и повтор ушёл бы с пустым телом.
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 		if err != nil {
 			return err
 		}
@@ -90,6 +115,9 @@ func (s *sender) send(ctx context.Context, policy retry.Policy, metrics []models
 		req.Header.Set("Content-Encoding", "gzip")
 		if signature != "" {
 			req.Header.Set("HashSHA256", signature)
+		}
+		if encrypted {
+			req.Header.Set(encryptedHeader, "true")
 		}
 
 		resp, err := s.client.Do(req)

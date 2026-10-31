@@ -152,7 +152,7 @@ func TestRunAccumulator_FlushesPendingOnShutdown(t *testing.T) {
 	a := &agent{}
 	a.pollCount.Store(4)
 
-	s := newSender(srv.Client(), srv.Listener.Addr().String(), "", shortPolicy())
+	s := newSender(srv.Client(), srv.Listener.Addr().String(), "", nil, shortPolicy())
 
 	done := make(chan struct{})
 	go func() {

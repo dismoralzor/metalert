@@ -24,7 +24,7 @@ func TestSender_2xxIsSuccess(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	s := newSender(srv.Client(), srv.Listener.Addr().String(), "", shortPolicy())
+	s := newSender(srv.Client(), srv.Listener.Addr().String(), "", nil, shortPolicy())
 	if !s.Send(context.Background(), []models.Metrics{}) {
 		t.Error("Send() = false, want true for 200 response")
 	}
@@ -41,7 +41,7 @@ func TestSender_5xxIsFailureAndRetries(t *testing.T) {
 	defer srv.Close()
 
 	policy := shortPolicy()
-	s := newSender(srv.Client(), srv.Listener.Addr().String(), "", policy)
+	s := newSender(srv.Client(), srv.Listener.Addr().String(), "", nil, policy)
 	if s.Send(context.Background(), []models.Metrics{}) {
 		t.Error("Send() = true, want false for 500 response")
 	}
@@ -62,7 +62,7 @@ func TestSender_4xxIsFailureWithoutRetry(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	s := newSender(srv.Client(), srv.Listener.Addr().String(), "", shortPolicy())
+	s := newSender(srv.Client(), srv.Listener.Addr().String(), "", nil, shortPolicy())
 	if s.Send(context.Background(), []models.Metrics{}) {
 		t.Error("Send() = true, want false for 400 response")
 	}
@@ -82,7 +82,7 @@ func TestSender_SendOnceDoesNotRetry(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	s := newSender(srv.Client(), srv.Listener.Addr().String(), "", shortPolicy())
+	s := newSender(srv.Client(), srv.Listener.Addr().String(), "", nil, shortPolicy())
 	if err := s.SendOnce(context.Background(), []models.Metrics{}); err == nil {
 		t.Error("SendOnce() = nil, want error for 500 response")
 	}
@@ -105,7 +105,7 @@ func TestSender_FailureSurfacesToWorkerResult(t *testing.T) {
 	jobsCh := make(chan job, 1)
 	resultsCh := make(chan sendResult, 1)
 
-	s := newSender(srv.Client(), srv.Listener.Addr().String(), "", shortPolicy())
+	s := newSender(srv.Client(), srv.Listener.Addr().String(), "", nil, shortPolicy())
 	go runWorker(ctx, jobsCh, resultsCh, s.Send)
 
 	jobsCh <- job{metrics: []models.Metrics{}, pollDelta: 7}

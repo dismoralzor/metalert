@@ -13,6 +13,8 @@ type config struct {
 	pollInterval   time.Duration
 	reportInterval time.Duration
 	key            string
+	// cryptoKey - путь к файлу с публичным RSA-ключом. Пусто = шифрование выключено.
+	cryptoKey string
 	// rateLimit - число одновременных исходящих запросов (размер воркер-пула).
 	// Не путать с -l сервера (там это уровень логирования) - разные бинарники.
 	rateLimit int
@@ -25,6 +27,7 @@ func parseFlags() config {
 	reportInterval := flag.Int("r", 10, "интервал отправки метрик, сек")
 	pollInterval := flag.Int("p", 2, "интервал сбора метрик, сек")
 	key := flag.String("k", "", "ключ для подписи запросов HashSHA256 (пусто - подпись выключена)")
+	cryptoKey := flag.String("crypto-key", "", "путь к файлу с публичным RSA-ключом (пусто - шифрование выключено)")
 	rateLimit := flag.Int("l", 1, "количество одновременных исходящих запросов")
 	flag.Parse()
 
@@ -33,6 +36,7 @@ func parseFlags() config {
 		pollInterval:   time.Duration(*pollInterval) * time.Second,
 		reportInterval: time.Duration(*reportInterval) * time.Second,
 		key:            *key,
+		cryptoKey:      *cryptoKey,
 		rateLimit:      *rateLimit,
 	}
 
@@ -45,6 +49,9 @@ func parseFlags() config {
 	cfg.pollInterval = envInterval("POLL_INTERVAL", cfg.pollInterval)
 	if envKey := os.Getenv("KEY"); envKey != "" {
 		cfg.key = envKey
+	}
+	if envCrypto := os.Getenv("CRYPTO_KEY"); envCrypto != "" {
+		cfg.cryptoKey = envCrypto
 	}
 	if raw := os.Getenv("RATE_LIMIT"); raw != "" {
 		n, err := strconv.Atoi(raw)

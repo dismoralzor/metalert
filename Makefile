@@ -9,7 +9,7 @@ LDFLAGS = -X 'main.buildVersion=$(BUILD_VERSION)' \
           -X 'main.buildDate=$(BUILD_DATE)' \
           -X 'main.buildCommit=$(BUILD_COMMIT)'
 
-.PHONY: build build-server build-agent clean
+.PHONY: build build-server build-agent clean gen-keys
 
 # Сборка обеих команд.
 build: build-server build-agent
@@ -25,3 +25,10 @@ build-agent:
 # Удаление собранных бинарников.
 clean:
 	rm -f cmd/server/server cmd/agent/agent
+
+# Пара RSA-ключей для локального e2e (каталог keys/ в .gitignore, не коммитим).
+# Публичный ключ -> агенту (-crypto-key), приватный -> серверу (-crypto-key).
+gen-keys:
+	mkdir -p keys
+	openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:4096 -out keys/private.pem
+	openssl rsa -in keys/private.pem -pubout -out keys/public.pem

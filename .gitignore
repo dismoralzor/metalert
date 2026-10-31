@@ -17,6 +17,9 @@ profiles/*.pprof
 # Собранные бинарники (например, ./cmd/staticlint).
 bin/
 
+# Локальные ключи шифрования (генерируются make gen-keys).
+keys/
+
 # Binaries
 cmd/agent/main
 cmd/agent/agent

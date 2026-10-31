@@ -17,6 +17,8 @@ type config struct {
 	restore         bool
 	dsn             string
 	key             string
+	// cryptoKey - путь к файлу с приватным RSA-ключом. Пусто = шифрование выключено.
+	cryptoKey string
 	// Аудит запросов (паттерн Наблюдатель). Пустая строка = приёмник выключен.
 	auditFile string
 	auditURL  string
@@ -30,6 +32,7 @@ func parseFlags() config {
 	restoreFlag := flag.Bool("r", true, "загружать метрики из файла при старте")
 	dsn := flag.String("d", "", "строка подключения к БД (DSN)")
 	key := flag.String("k", "", "ключ для подписи запросов/ответов HashSHA256 (пусто - подпись выключена)")
+	cryptoKey := flag.String("crypto-key", "", "путь к файлу с приватным RSA-ключом (пусто - шифрование выключено)")
 	// flag.String("audit-file", ...) принимает и -audit-file, и --audit-file.
 	auditFile := flag.String("audit-file", "", "путь к файлу аудита запросов (пусто - выключено)")
 	auditURL := flag.String("audit-url", "", "URL приёмника аудита запросов (пусто - выключено)")
@@ -43,6 +46,7 @@ func parseFlags() config {
 		restore:         *restoreFlag,
 		dsn:             *dsn,
 		key:             *key,
+		cryptoKey:       *cryptoKey,
 		auditFile:       *auditFile,
 		auditURL:        *auditURL,
 	}
@@ -80,6 +84,9 @@ func parseFlags() config {
 	}
 	if envKey := os.Getenv("KEY"); envKey != "" {
 		cfg.key = envKey
+	}
+	if envCrypto := os.Getenv("CRYPTO_KEY"); envCrypto != "" {
+		cfg.cryptoKey = envCrypto
 	}
 	if envAuditFile := os.Getenv("AUDIT_FILE"); envAuditFile != "" {
 		cfg.auditFile = envAuditFile

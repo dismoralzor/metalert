@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"crypto/rsa"
 	"database/sql"
 	"errors"
 	"log"
@@ -22,6 +23,7 @@ import (
 
 	"github.com/dismoralzor/metalert/internal/audit"
 	"github.com/dismoralzor/metalert/internal/buildinfo"
+	"github.com/dismoralzor/metalert/internal/crypto"
 	"github.com/dismoralzor/metalert/internal/handler"
 	"github.com/dismoralzor/metalert/internal/logger"
 	"github.com/dismoralzor/metalert/internal/repository"
@@ -53,6 +55,16 @@ func main() {
 		log.Fatal(err)
 	}
 	defer zlog.Sync()
+
+	// Приватный ключ шифрования загружаем один раз при старте. Путь задан, но
+	// ключ не читается/не парсится - фатальная ошибка старта.
+	var cryptoKey *rsa.PrivateKey
+	if cfg.cryptoKey != "" {
+		cryptoKey, err = crypto.LoadPrivateKey(cfg.cryptoKey)
+		if err != nil {
+			log.Fatalf("load crypto key: %v", err)
+		}
+	}
 
 	// БД опциональна: пустой dsn - работаем как раньше, на памяти/файле. Но если dsn
 	// задан явно, а подключиться не удалось - это не повод тихо съехать на файловый
@@ -116,6 +128,10 @@ func main() {
 	r := chi.NewRouter()
 	// Use до регистрации роутов: chi паникует, если middleware добавляют
 	// к роутеру, в котором уже объявлены маршруты.
+	// Расшифровка - САМЫЙ ВНЕШНИЙ слой: она подменяет тело на расшифрованное,
+	// и все следующие middleware (gzip, HMAC) видят ровно тот запрос, что и без
+	// шифрования. При nil-ключе / незашифрованном запросе прозрачна.
+	r.Use(handler.DecryptMiddleware(cryptoKey))
 	// Логгер снаружи gzip: в лог попадает размер тела, реально ушедшего в сеть.
 	r.Use(logger.RequestLogger(zlog))
 	r.Use(handler.GzipMiddleware)
