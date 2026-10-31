@@ -21,13 +21,29 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/dismoralzor/metalert/internal/audit"
+	"github.com/dismoralzor/metalert/internal/buildinfo"
 	"github.com/dismoralzor/metalert/internal/handler"
 	"github.com/dismoralzor/metalert/internal/logger"
 	"github.com/dismoralzor/metalert/internal/repository"
 	"github.com/dismoralzor/metalert/internal/retry"
 )
 
+// Информация о сборке. Заполняется линковщиком через -ldflags -X main.<имя>=...;
+// при обычной сборке значения пустые и выводятся как "N/A".
+var (
+	// buildVersion - версия сборки (например, тег git).
+	buildVersion string
+	// buildDate - дата сборки.
+	buildDate string
+	// buildCommit - короткий хеш коммита сборки.
+	buildCommit string
+)
+
 func main() {
+	// Печатаем сведения о сборке самым первым действием, до разбора флагов и
+	// инициализации логгера, прямо в stdout (их читает автотест).
+	buildinfo.Print(os.Stdout, buildVersion, buildDate, buildCommit)
+
 	cfg := parseFlags()
 
 	// Логгер - явная зависимость: создаём здесь и прокидываем дальше. До этого

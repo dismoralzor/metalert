@@ -12,8 +12,20 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/dismoralzor/metalert/internal/buildinfo"
 	models "github.com/dismoralzor/metalert/internal/model"
 	"github.com/dismoralzor/metalert/internal/retry"
+)
+
+// Информация о сборке. Заполняется линковщиком через -ldflags -X main.<имя>=...;
+// при обычной сборке значения пустые и выводятся как "N/A".
+var (
+	// buildVersion - версия сборки (например, тег git).
+	buildVersion string
+	// buildDate - дата сборки.
+	buildDate string
+	// buildCommit - короткий хеш коммита сборки.
+	buildCommit string
 )
 
 // agent хранит только pollCount: горутина A инкрементирует его на каждый опрос,
@@ -29,6 +41,10 @@ type agent struct {
 }
 
 func main() {
+	// Печатаем сведения о сборке самым первым действием, прямо в stdout
+	// (их читает автотест), до разбора флагов и любых сетевых операций.
+	buildinfo.Print(os.Stdout, buildVersion, buildDate, buildCommit)
+
 	cfg := parseFlags()
 
 	ctx, cancel := context.WithCancel(context.Background())
