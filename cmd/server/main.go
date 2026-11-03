@@ -46,7 +46,10 @@ func main() {
 	// инициализации логгера, прямо в stdout (их читает автотест).
 	buildinfo.Print(os.Stdout, buildVersion, buildDate, buildCommit)
 
-	cfg := parseFlags()
+	cfg, err := loadConfig(os.Args[1:], os.LookupEnv)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// Логгер - явная зависимость: создаём здесь и прокидываем дальше. До этого
 	// момента об ошибках сообщаем стандартным log (zap ещё нет).

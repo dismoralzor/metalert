@@ -48,13 +48,15 @@ func main() {
 	// (их читает автотест), до разбора флагов и любых сетевых операций.
 	buildinfo.Print(os.Stdout, buildVersion, buildDate, buildCommit)
 
-	cfg := parseFlags()
+	cfg, err := loadConfig(os.Args[1:], os.LookupEnv)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// Публичный ключ шифрования загружаем один раз при старте. Путь задан, но
 	// ключ не читается/не парсится - фатальная ошибка старта.
 	var cryptoKey *rsa.PublicKey
 	if cfg.cryptoKey != "" {
-		var err error
 		cryptoKey, err = crypto.LoadPublicKey(cfg.cryptoKey)
 		if err != nil {
 			log.Fatalf("load crypto key: %v", err)
