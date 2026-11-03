@@ -9,6 +9,7 @@ import (
 	"crypto/rsa"
 	"database/sql"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -46,13 +47,24 @@ func main() {
 	// инициализации логгера, прямо в stdout (их читает автотест).
 	buildinfo.Print(os.Stdout, buildVersion, buildDate, buildCommit)
 
+	// Стандартный log.Fatal, а не zlog.Fatal: явный os.Exit(1), не зависящий от
+	// onFatal-хука zap-логгера. Это единственная точка выхода программы.
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+// run - вся логика сервера: конфигурация, сборка зависимостей, HTTP-сервер и
+// graceful shutdown. Вынесена из main, чтобы main остался тонкой обёрткой
+// с единственным выходом, а саму логику можно было покрыть тестами.
+func run() error {
 	cfg := parseFlags()
 
 	// Логгер - явная зависимость: создаём здесь и прокидываем дальше. До этого
 	// момента об ошибках сообщаем стандартным log (zap ещё нет).
 	zlog, err := logger.New(cfg.logLevel)
 	if err != nil {
-		log.Fatal(err)
+		return fmt.Errorf("logger: %w", err)
 	}
 	defer zlog.Sync()
 
@@ -72,10 +84,9 @@ func main() {
 	// падаем сразу, а не продолжаем с db == nil.
 	var db *sql.DB
 	if cfg.dsn != "" {
-		var err error
 		db, err = sql.Open("pgx", cfg.dsn)
 		if err != nil {
-			log.Fatalf("open db: %v", err)
+			return fmt.Errorf("open db: %w", err)
 		}
 		defer db.Close()
 
@@ -83,15 +94,18 @@ func main() {
 		// обнаружилась бы только на первом реальном запросе, а не на старте.
 		pingCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
-		if err := db.PingContext(pingCtx); err != nil {
-			log.Fatalf("ping db: %v", err)
+		if err = db.PingContext(pingCtx); err != nil {
+			return fmt.Errorf("ping db: %w", err)
 		}
 	}
 
 	// Старт приложения - осмысленного родительского контекста ещё нет
 	// (сигналы перехватим чуть ниже), поэтому Background - как и раньше
 	// для Ping выше.
-	storage, fileMode := selectStorage(context.Background(), cfg, db, zlog)
+	storage, fileMode, err := selectStorage(context.Background(), cfg, db, zlog)
+	if err != nil {
+		return err
+	}
 
 	// Аудитор (паттерн Наблюдатель): издатель + приёмники по конфигу.
 	// Подписчиков может не быть вовсе - тогда NotifyAll просто ничего не делает.
@@ -99,9 +113,9 @@ func main() {
 	if cfg.auditFile != "" {
 		// Файл открывается в конструкторе: ошибка доступа должна валить старт
 		// сразу, а не всплывать на первом же событии аудита.
-		fileObs, err := audit.NewFileObserver(cfg.auditFile)
-		if err != nil {
-			log.Fatalf("open audit file: %v", err)
+		fileObs, ferr := audit.NewFileObserver(cfg.auditFile)
+		if ferr != nil {
+			return fmt.Errorf("open audit file: %w", ferr)
 		}
 		auditor.Subscribe(fileObs)
 		zlog.Info("audit file observer enabled", zap.String("path", cfg.auditFile))
@@ -208,13 +222,12 @@ func main() {
 	zlog.Info("starting server", zap.String("addr", cfg.addr))
 	// После Shutdown ListenAndServe возвращает ErrServerClosed - это штатный выход.
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		// Стандартный log.Fatal, а не zlog.Fatal: явный os.Exit(1) вместо
-		// того, чтобы полагаться на onFatal-хук zap-логгера. Это происходит ДО
-		// получения сигнала (например, "address already in use" при старте) -
-		// ctx ещё не отменён, а значит wg.Wait() ниже заблокировалась бы навсегда:
-		// тикер сохранения ждёт именно ctx.Done(), которого в этом сценарии не будет.
-		// Живой процесс без слушающего порта недопустим - выходим прямо здесь.
-		log.Fatalf("listen and serve: %v", err)
+		// Ошибка выше в main (например, "address already in use" при старте) -
+		// происходит ДО получения сигнала, ctx ещё не отменён, а значит wg.Wait()
+		// ниже заблокировалась бы навсегда: тикер сохранения ждёт именно ctx.Done(),
+		// которого в этом сценарии не будет. Живой процесс без слушающего порта
+		// недопустим - выходим прямо здесь.
+		return fmt.Errorf("listen and serve: %w", err)
 	}
 
 	// Сначала дожидаемся остановки тикера, чтобы он не писал файл параллельно
@@ -238,22 +251,24 @@ func main() {
 		defer cancel()
 		saveNow(saveCtx)
 	}
+
+	return nil
 }
 
 // selectStorage выбирает реализацию Storage по приоритету: БД > файл > память.
 // fileMode сообщает вызывающей стороне, нужно ли поднимать тикер периодического
 // сохранения и graceful save в файл при остановке - эти механизмы не имеют смысла
 // для БД (сама персистентна) и для голой памяти (сохранять некуда).
-func selectStorage(ctx context.Context, cfg config, db *sql.DB, zlog *zap.Logger) (storage repository.Storage, fileMode bool) {
+func selectStorage(ctx context.Context, cfg config, db *sql.DB, zlog *zap.Logger) (repository.Storage, bool, error) {
 	if cfg.dsn != "" {
 		if err := repository.RunMigrations(db); err != nil {
-			zlog.Fatal("run migrations", zap.Error(err))
+			return nil, false, fmt.Errorf("run migrations: %w", err)
 		}
-		return repository.NewDBStorage(db, retry.DefaultPolicy(), zlog), false
+		return repository.NewDBStorage(db, retry.DefaultPolicy(), zlog), false, nil
 	}
 
 	if cfg.fileStoragePath != "" {
-		storage = repository.NewMemStorage()
+		storage := repository.Storage(repository.NewMemStorage())
 
 		if cfg.restore {
 			metrics, err := repository.LoadFromFile(cfg.fileStoragePath)
@@ -272,8 +287,8 @@ func selectStorage(ctx context.Context, cfg config, db *sql.DB, zlog *zap.Logger
 			storage = repository.NewSavingStorage(storage, cfg.fileStoragePath, zlog)
 		}
 
-		return storage, true
+		return storage, true, nil
 	}
 
-	return repository.NewMemStorage(), false
+	return repository.NewMemStorage(), false, nil
 }
