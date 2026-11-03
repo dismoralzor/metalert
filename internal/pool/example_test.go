@@ -3,7 +3,6 @@ package pool_test
 import (
 	"fmt"
 
-	models "github.com/dismoralzor/metalert/internal/model"
 	"github.com/dismoralzor/metalert/internal/pool"
 )
 
@@ -12,12 +11,12 @@ import (
 // независимо от того, вернул ли sync.Pool тот же объект или создал новый
 // фабрикой.
 func ExamplePool() {
-	p := pool.New(func() *models.Demo { return &models.Demo{} })
+	p := pool.New(func() *fixture { return &fixture{} })
 
-	d := p.Get()
-	d.Count = 42
-	d.Name = "dirty"
-	p.Put(d)
+	f := p.Get()
+	f.Count = 42
+	f.Name = "dirty"
+	p.Put(f)
 
 	got := p.Get()
 	fmt.Println(got.Count)

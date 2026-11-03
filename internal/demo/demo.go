@@ -1,4 +1,6 @@
-package models
+// Package demo содержит демонстрационные структуры для кодогенератора cmd/reset,
+// отдельно от бизнес-модели (internal/model).
+package demo
 
 // nestedNote - вложенная структура-данные без собственного Reset(): генератор
 // сбросит её целиком через resetZeroGen.

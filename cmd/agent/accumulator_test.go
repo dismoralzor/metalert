@@ -189,3 +189,71 @@ func TestRunAccumulator_FlushesPendingOnShutdown(t *testing.T) {
 
 	<-done
 }
+
+// Гонка при shutdown: ctx отменяется, когда батч уже сформирован, но ещё не
+// ушёл в jobsCh (канал не читается). Данные не должны теряться - батч уходит
+// той же финальной отправкой, что и обычный shutdown.
+func TestRunAccumulator_FlushesBatchWhenCancelledDuringSend(t *testing.T) {
+	received := make(chan []models.Metrics, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		zr, err := gzip.NewReader(r.Body)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		raw, _ := io.ReadAll(zr)
+		var batch []models.Metrics
+		_ = json.Unmarshal(raw, &batch)
+		received <- batch
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	metricsCh := make(chan models.Metrics)
+	// Без буфера и читателя: аккумулятор повиснет на отправке job именно в тот
+	// момент, когда мы отменим контекст.
+	jobsCh := make(chan job)
+	resultsCh := make(chan sendResult)
+	a := &agent{}
+	a.pollCount.Store(7)
+
+	s := newSender(srv.Client(), srv.Listener.Addr().String(), "", nil, shortPolicy())
+
+	done := make(chan struct{})
+	go func() {
+		runAccumulator(ctx, 15*time.Millisecond, metricsCh, jobsCh, resultsCh, a, s)
+		close(done)
+	}()
+
+	v := 1.0
+	metricsCh <- models.Metrics{ID: "Alloc", MType: models.Gauge, Value: &v}
+
+	// Даём тику сформировать батч и упереться в запись в jobsCh, затем отменяем.
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+
+	select {
+	case batch := <-received:
+		var foundAlloc, foundPoll bool
+		for _, m := range batch {
+			switch m.ID {
+			case "Alloc":
+				foundAlloc = true
+			case "PollCount":
+				foundPoll = true
+				if m.Delta == nil || *m.Delta != 7 {
+					t.Errorf("PollCount delta = %v, want 7", m.Delta)
+				}
+			}
+		}
+		if !foundAlloc || !foundPoll {
+			t.Errorf("batch = %+v, want Alloc + PollCount", batch)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("batch was lost on cancellation during jobsCh send")
+	}
+
+	<-done
+}

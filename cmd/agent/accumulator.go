@@ -85,30 +85,37 @@ func runAccumulator(
 			select {
 			case jobsCh <- job{metrics: batch, pollDelta: delta}:
 			case <-ctx.Done():
+				// Батч собран, delta уже забрана из pollCount - просто выйти,
+				// значит потерять данные. Уходит тем же финальным путём, что и
+				// обычный shutdown; в jobsCh батч не попал, дубля не будет.
+				sendBatchOnce(ctx, batch, s)
 				return
 			}
 		}
 	}
 }
 
-// flushFinal отправляет накопленное при остановке агента. Делает это, только если
-// есть что отправлять (pending непустой или pollCount > 0), одной попыткой без
-// retry и под собственным коротким контекстом, т.к. переданный ctx уже отменён.
+// flushFinal отправляет накопленное при остановке агента, если есть что
+// отправлять (pending непустой или pollCount > 0).
 func flushFinal(ctx context.Context, pending []models.Metrics, a *agent, s *sender) {
 	delta := a.pollCount.Swap(0)
 	if len(pending) == 0 && delta == 0 {
 		return
 	}
+
+	d := delta
+	batch := append(pending, models.Metrics{ID: "PollCount", MType: models.Counter, Delta: &d})
+	sendBatchOnce(ctx, batch, s)
+}
+
+// sendBatchOnce делает одну попытку отправить батч без retry под собственным
+// коротким контекстом: переданный ctx уже отменён, поэтому использовать его
+// для сетевого вызова нельзя. Ошибку только логируем - процесс завершается.
+func sendBatchOnce(ctx context.Context, batch []models.Metrics, s *sender) {
 	if s == nil {
 		return
 	}
 
-	d := delta
-	batch := append(pending, models.Metrics{ID: "PollCount", MType: models.Counter, Delta: &d})
-
-	// Отдельный контекст: основной ctx уже Done, но финальную отправку хочется
-	// успеть сделать. WithoutCancel отвязывает от отмены родителя, таймаут
-	// ограничивает ожидание.
 	sendCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 	defer cancel()
 
