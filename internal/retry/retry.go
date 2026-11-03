@@ -4,6 +4,7 @@ package retry
 
 import (
 	"context"
+	"errors"
 	"time"
 )
 
@@ -29,7 +30,8 @@ func DefaultPolicy() Policy {
 //
 // Пауза сделана через select с ctx.Done(), а не через time.Sleep: если вызывающая
 // сторона отменит контекст (например, graceful shutdown), ожидание прервётся сразу,
-// а не провисит до 5 секунд впустую.
+// а не провисит до 5 секунд впустую. При этом последняя ошибка операции не теряется -
+// она объединяется с ctx.Err() через errors.Join.
 func (p Policy) Do(ctx context.Context, fn func() error, isRetriable func(error) bool) error {
 	var err error
 
@@ -47,7 +49,8 @@ func (p Policy) Do(ctx context.Context, fn func() error, isRetriable func(error)
 
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			// Отмена не должна прятать причину повторов: возвращаем обе ошибки.
+			return errors.Join(ctx.Err(), err)
 		case <-time.After(p.Delays[attempt]):
 		}
 	}

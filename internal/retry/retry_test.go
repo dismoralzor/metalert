@@ -148,3 +148,33 @@ func TestDo_ContextCancelInterruptsWait(t *testing.T) {
 		t.Errorf("calls = %d, want 1 (cancelled during first wait)", calls)
 	}
 }
+
+func TestDo_ContextCancelKeepsOperationError(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	retriableErr := errors.New("temporary")
+	done := make(chan error, 1)
+	go func() {
+		done <- DefaultPolicy().Do(ctx, func() error {
+			return retriableErr
+		}, func(error) bool { return true })
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-done:
+		// Вызывающая сторона должна увидеть и отмену, и причину повторов.
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("Do() error = %v, want context.Canceled", err)
+		}
+		if !errors.Is(err, retriableErr) {
+			t.Errorf("Do() error = %v, want операционную ошибку %v", err, retriableErr)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("Do() did not return promptly after ctx cancellation")
+	}
+}
