@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -78,6 +79,16 @@ func run() error {
 		cryptoKey, err = crypto.LoadPrivateKey(cfg.cryptoKey)
 		if err != nil {
 			log.Fatalf("load crypto key: %v", err)
+		}
+	}
+
+	// Доверенная подсеть для приёма метрик (проверка X-Real-IP). Пустая -
+	// ограничений нет; заданная, но не CIDR - фатальная ошибка старта.
+	var trustedSubnet *net.IPNet
+	if cfg.trustedSubnet != "" {
+		_, trustedSubnet, err = net.ParseCIDR(cfg.trustedSubnet)
+		if err != nil {
+			return fmt.Errorf("parse trusted subnet: %w", err)
 		}
 	}
 
@@ -155,14 +166,18 @@ func run() error {
 	// ПОСЛЕ Gzip: агент считает подпись от НЕсжатого тела, значит и проверять
 	// её нужно уже после распаковки. При пустом cfg.key middleware прозрачен.
 	r.Use(handler.HashMiddleware(cfg.key))
-	r.Post("/update/{type}/{name}/{value}", updateHandler.Update)
+	// Приём метрик ограничиваем доверенной подсетью (при заданной), чтение -
+	// нет: запрещена именно отправка, поэтому middleware в With на маршрутах,
+	// а не в общем Use.
+	trusted := handler.TrustedSubnetMiddleware(trustedSubnet)
+	r.With(trusted).Post("/update/{type}/{name}/{value}", updateHandler.Update)
 	r.Get("/value/{type}/{name}", valueHandler.Value)
 	// Спецификация описывает JSON-эндпоинты со слешем на конце, но chi считает
 	// "/update" и "/update/" разными путями - регистрируем оба варианта.
-	r.Post("/update", updateJSONHandler.Update)
-	r.Post("/update/", updateJSONHandler.Update)
-	r.Post("/updates", updatesJSONHandler.Update)
-	r.Post("/updates/", updatesJSONHandler.Update)
+	r.With(trusted).Post("/update", updateJSONHandler.Update)
+	r.With(trusted).Post("/update/", updateJSONHandler.Update)
+	r.With(trusted).Post("/updates", updatesJSONHandler.Update)
+	r.With(trusted).Post("/updates/", updatesJSONHandler.Update)
 	r.Post("/value", valueJSONHandler.Value)
 	r.Post("/value/", valueJSONHandler.Value)
 	r.Get("/", indexHandler.Index)

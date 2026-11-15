@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 
 	"github.com/dismoralzor/metalert/internal/crypto"
@@ -32,12 +33,35 @@ type sender struct {
 	key       string
 	cryptoKey *rsa.PublicKey
 	policy    retry.Policy
+	// realIP - IP хоста агента для заголовка X-Real-IP (сервер может
+	// ограничивать приём метрик доверенной подсетью).
+	realIP string
 }
 
 // newSender создаёт отправитель с заданной политикой повторов. cryptoKey == nil
 // означает, что шифрование выключено (поведение как в iter23).
 func newSender(client *http.Client, addr, key string, cryptoKey *rsa.PublicKey, policy retry.Policy) *sender {
-	return &sender{client: client, addr: addr, key: key, cryptoKey: cryptoKey, policy: policy}
+	return &sender{client: client, addr: addr, key: key, cryptoKey: cryptoKey, policy: policy, realIP: localIP(addr)}
+}
+
+// localIP определяет IP, который ядро назначит исходящему соединению к серверу.
+// UDP-"диал" ничего не отправляет, поэтому работает и до старта сервера.
+// Сначала пробуем udp4: доверенные подсети обычно задают в IPv4, а localhost
+// на многих системах резолвится в ::1. При любой неудаче - IPv4 loopback:
+// лучше валидный IP, чем пустой заголовок.
+func localIP(serverAddr string) string {
+	for _, network := range []string{"udp4", "udp"} {
+		conn, err := net.Dial(network, serverAddr)
+		if err != nil {
+			continue
+		}
+		addr, ok := conn.LocalAddr().(*net.UDPAddr)
+		conn.Close()
+		if ok && addr.IP != nil {
+			return addr.IP.String()
+		}
+	}
+	return "127.0.0.1"
 }
 
 // Send отправляет батч с обычной политикой повторов. Возвращает true при успехе;
@@ -113,6 +137,7 @@ func (s *sender) send(ctx context.Context, policy retry.Policy, metrics []models
 		}
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Content-Encoding", "gzip")
+		req.Header.Set("X-Real-IP", s.realIP)
 		if signature != "" {
 			req.Header.Set("HashSHA256", signature)
 		}

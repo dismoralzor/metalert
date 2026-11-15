@@ -20,6 +20,7 @@ type ServerFile struct {
 	CryptoKey     *string   `json:"crypto_key"`
 	AuditFile     *string   `json:"audit_file"`
 	AuditURL      *string   `json:"audit_url"`
+	TrustedSubnet *string   `json:"trusted_subnet"`
 }
 
 // AgentFile - конфигурация агента из JSON-файла. Семантика полей-указателей

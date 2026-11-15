@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -121,5 +122,29 @@ func TestSender_FailureSurfacesToWorkerResult(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("timed out waiting for sendResult")
+	}
+}
+
+// Сервер может ограничивать приём метрик доверенной подсетью по X-Real-IP -
+// заголовок обязан быть в каждом запросе и содержать валидный IP.
+func TestSender_SetsRealIPHeader(t *testing.T) {
+	var gotIP string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotIP = r.Header.Get("X-Real-IP")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	s := newSender(srv.Client(), srv.Listener.Addr().String(), "", nil, shortPolicy())
+	if !s.Send(context.Background(), []models.Metrics{}) {
+		t.Fatal("Send() = false, want true")
+	}
+
+	ip := net.ParseIP(gotIP)
+	if ip == nil {
+		t.Fatalf("X-Real-IP = %q, не парсится как IP", gotIP)
+	}
+	if !ip.IsLoopback() {
+		t.Errorf("X-Real-IP = %q, want loopback для httptest-сервера", gotIP)
 	}
 }

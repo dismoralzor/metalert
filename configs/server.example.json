@@ -8,5 +8,6 @@
   "key": "",
   "crypto_key": "",
   "audit_file": "",
-  "audit_url": ""
+  "audit_url": "",
+  "trusted_subnet": ""
 }

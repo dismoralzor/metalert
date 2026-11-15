@@ -23,6 +23,9 @@ type config struct {
 	// Аудит запросов (паттерн Наблюдатель). Пустая строка = приёмник выключен.
 	auditFile string
 	auditURL  string
+	// trustedSubnet - CIDR доверенной подсеты (проверка X-Real-IP на приёме
+	// метрик). Пусто = ограничений нет.
+	trustedSubnet string
 }
 
 // loadConfig собирает конфигурацию слоями по нарастанию приоритета:
@@ -42,6 +45,7 @@ func loadConfig(args []string, lookupEnv func(string) (string, bool)) (config, e
 	// fs.String("audit-file", ...) принимает и -audit-file, и --audit-file.
 	auditFile := fs.String("audit-file", "", "путь к файлу аудита запросов (пусто - выключено)")
 	auditURL := fs.String("audit-url", "", "URL приёмника аудита запросов (пусто - выключено)")
+	trustedSubnet := fs.String("t", "", "CIDR доверенной подсети для приёма метрик (пусто - без ограничений)")
 	// -c и -config - один параметр под двумя именами.
 	cfgPath := fs.String("c", "", "путь к JSON-файлу конфигурации")
 	fs.StringVar(cfgPath, "config", "", "путь к JSON-файлу конфигурации")
@@ -62,6 +66,7 @@ func loadConfig(args []string, lookupEnv func(string) (string, bool)) (config, e
 		cryptoKey:       *cryptoKey,
 		auditFile:       *auditFile,
 		auditURL:        *auditURL,
+		trustedSubnet:   *trustedSubnet,
 	}
 
 	// Путь к конфигу: env CONFIG перекрывает флаг, как у остальных опций.
@@ -106,6 +111,9 @@ func loadConfig(args []string, lookupEnv func(string) (string, bool)) (config, e
 		if fc.AuditURL != nil {
 			cfg.auditURL = *fc.AuditURL
 		}
+		if fc.TrustedSubnet != nil {
+			cfg.trustedSubnet = *fc.TrustedSubnet
+		}
 	}
 
 	// Слой флагов: применяем только реально переданные - сравнение с дефолтом
@@ -141,6 +149,9 @@ func loadConfig(args []string, lookupEnv func(string) (string, bool)) (config, e
 	}
 	if visited["audit-url"] {
 		cfg.auditURL = *auditURL
+	}
+	if visited["t"] {
+		cfg.trustedSubnet = *trustedSubnet
 	}
 
 	// Слой env: реально заданная переменная перекрывает всё остальное.
@@ -185,6 +196,9 @@ func loadConfig(args []string, lookupEnv func(string) (string, bool)) (config, e
 	}
 	if v, ok := lookupEnv("AUDIT_URL"); ok && v != "" {
 		cfg.auditURL = v
+	}
+	if v, ok := lookupEnv("TRUSTED_SUBNET"); ok && v != "" {
+		cfg.trustedSubnet = v
 	}
 
 	return cfg, nil

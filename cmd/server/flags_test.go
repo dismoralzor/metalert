@@ -33,7 +33,7 @@ func TestLoadConfig_Defaults(t *testing.T) {
 	if cfg.addr != "localhost:8080" || cfg.logLevel != "info" ||
 		cfg.storeInterval != 300*time.Second || cfg.fileStoragePath != "metrics.json" ||
 		!cfg.restore || cfg.dsn != "" || cfg.key != "" || cfg.cryptoKey != "" ||
-		cfg.auditFile != "" || cfg.auditURL != "" {
+		cfg.auditFile != "" || cfg.auditURL != "" || cfg.trustedSubnet != "" {
 		t.Errorf("дефолты изменились: %+v", cfg)
 	}
 }
@@ -48,7 +48,8 @@ const fullServerJSON = `{
 	"key": "file-key",
 	"crypto_key": "/tmp/file.pem",
 	"audit_file": "/tmp/audit.log",
-	"audit_url": "http://audit"
+	"audit_url": "http://audit",
+	"trusted_subnet": "192.168.1.0/24"
 }`
 
 func TestLoadConfig_FileOnly(t *testing.T) {
@@ -63,9 +64,37 @@ func TestLoadConfig_FileOnly(t *testing.T) {
 		cfg.storeInterval != time.Second || cfg.fileStoragePath != "/tmp/from-file.db" ||
 		cfg.restore || cfg.dsn != "postgres://file" || cfg.key != "file-key" ||
 		cfg.cryptoKey != "/tmp/file.pem" || cfg.auditFile != "/tmp/audit.log" ||
-		cfg.auditURL != "http://audit" {
+		cfg.auditURL != "http://audit" || cfg.trustedSubnet != "192.168.1.0/24" {
 		t.Errorf("значения из файла не применились: %+v", cfg)
 	}
+}
+
+// trusted_subnet собирается по тем же слоям: файл < флаг -t < env TRUSTED_SUBNET.
+func TestLoadConfig_TrustedSubnet(t *testing.T) {
+	fileJSON := `{"trusted_subnet": "192.168.1.0/24"}`
+
+	t.Run("флаг перекрывает файл", func(t *testing.T) {
+		path := writeConfig(t, fileJSON)
+		cfg, err := loadConfig([]string{"-c", path, "-t", "10.0.0.0/8"}, envFrom(nil))
+		if err != nil {
+			t.Fatalf("loadConfig: %v", err)
+		}
+		if cfg.trustedSubnet != "10.0.0.0/8" {
+			t.Errorf("trustedSubnet = %q, want 10.0.0.0/8 (флаг)", cfg.trustedSubnet)
+		}
+	})
+
+	t.Run("env перекрывает флаг и файл", func(t *testing.T) {
+		path := writeConfig(t, fileJSON)
+		cfg, err := loadConfig([]string{"-c", path, "-t", "10.0.0.0/8"},
+			envFrom(map[string]string{"TRUSTED_SUBNET": "172.16.0.0/12"}))
+		if err != nil {
+			t.Fatalf("loadConfig: %v", err)
+		}
+		if cfg.trustedSubnet != "172.16.0.0/12" {
+			t.Errorf("trustedSubnet = %q, want 172.16.0.0/12 (env)", cfg.trustedSubnet)
+		}
+	})
 }
 
 func TestLoadConfig_Priority(t *testing.T) {
