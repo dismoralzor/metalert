@@ -66,10 +66,11 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// SIGTERM - обычный сигнал от docker stop / systemd, SIGINT - Ctrl+C.
-	// Один cancel() на оба - всем горутинам ниже всё равно, каким сигналом их остановили.
+	// SIGTERM - обычный сигнал от docker stop / systemd, SIGINT - Ctrl+C,
+	// SIGQUIT - Ctrl+\. Один cancel() на все - всем горутинам ниже всё равно,
+	// каким сигналом их остановили.
 	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM, syscall.SIGQUIT)
 	go func() {
 		<-sigCh
 		cancel()

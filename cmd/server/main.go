@@ -182,7 +182,8 @@ func run() error {
 	}
 
 	// NotifyContext - это signal.Notify и отмена контекста одним вызовом.
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	// SIGINT - Ctrl+C, SIGTERM - docker stop / systemd, SIGQUIT - Ctrl+\.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGQUIT)
 	defer stop()
 
 	// Тикер сохранения имеет смысл только в файловом режиме - БД сама персистентна,
