@@ -82,7 +82,7 @@ func run() error {
 	if cfg.cryptoKey != "" {
 		cryptoKey, err = crypto.LoadPrivateKey(cfg.cryptoKey)
 		if err != nil {
-			log.Fatalf("load crypto key: %v", err)
+			return fmt.Errorf("load crypto key: %w", err)
 		}
 	}
 
