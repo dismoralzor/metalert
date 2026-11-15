@@ -1,5 +1,6 @@
 // Command server - сервер сбора метрик: принимает метрики по HTTP (текстовый и
-// JSON-протоколы), хранит их в памяти/файле/PostgreSQL и отдаёт по запросу.
+// JSON-протоколы) и, при заданном адресе (флаг -g), по gRPC; хранит их в
+// памяти/файле/PostgreSQL и отдаёт по запросу.
 package main
 
 //go:generate go run github.com/dismoralzor/metalert/cmd/reset
@@ -26,10 +27,13 @@ import (
 	"github.com/dismoralzor/metalert/internal/audit"
 	"github.com/dismoralzor/metalert/internal/buildinfo"
 	"github.com/dismoralzor/metalert/internal/crypto"
+	"github.com/dismoralzor/metalert/internal/grpcserver"
 	"github.com/dismoralzor/metalert/internal/handler"
 	"github.com/dismoralzor/metalert/internal/logger"
+	pb "github.com/dismoralzor/metalert/internal/proto"
 	"github.com/dismoralzor/metalert/internal/repository"
 	"github.com/dismoralzor/metalert/internal/retry"
+	"google.golang.org/grpc"
 )
 
 // Информация о сборке. Заполняется линковщиком через -ldflags -X main.<имя>=...;
@@ -227,6 +231,28 @@ func run() error {
 
 	srv := &http.Server{Addr: cfg.addr, Handler: r}
 
+	// gRPC-приём метрик опционален: пустой адрес - обслуживаем только HTTP.
+	// Интерсептор trustedSubnet тот же по смыслу, что и HTTP-middleware, только
+	// IP приезжает в метаданных x-real-ip, а не в заголовке.
+	var grpcSrv *grpc.Server
+	if cfg.grpcAddress != "" {
+		grpcLis, err := net.Listen("tcp", cfg.grpcAddress)
+		if err != nil {
+			return fmt.Errorf("listen grpc: %w", err)
+		}
+		grpcSrv = grpc.NewServer(
+			grpc.UnaryInterceptor(grpcserver.TrustedSubnetInterceptor(trustedSubnet)),
+		)
+		pb.RegisterMetricsServer(grpcSrv, grpcserver.NewMetricsServer(storage))
+
+		go func() {
+			zlog.Info("starting grpc server", zap.String("addr", cfg.grpcAddress))
+			if err := grpcSrv.Serve(grpcLis); err != nil {
+				zlog.Error("grpc serve", zap.Error(err))
+			}
+		}()
+	}
+
 	go func() {
 		<-ctx.Done()
 		// Даём активным запросам дописать ответы, но не ждём вечно.
@@ -235,6 +261,11 @@ func run() error {
 
 		if err := srv.Shutdown(shutdownCtx); err != nil {
 			zlog.Error("shutdown", zap.Error(err))
+		}
+		// GracefulStop ждёт завершения активных RPC; Stop не нужен - процесс и
+		// так завершается следом.
+		if grpcSrv != nil {
+			grpcSrv.GracefulStop()
 		}
 	}()
 

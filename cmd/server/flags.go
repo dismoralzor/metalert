@@ -26,6 +26,9 @@ type config struct {
 	// trustedSubnet - CIDR доверенной подсеты (проверка X-Real-IP на приёме
 	// метрик). Пусто = ограничений нет.
 	trustedSubnet string
+	// grpcAddress - адрес gRPC-сервера метрик. Пусто = gRPC не поднимается,
+	// приём только по HTTP.
+	grpcAddress string
 }
 
 // loadConfig собирает конфигурацию слоями по нарастанию приоритета:
@@ -46,6 +49,7 @@ func loadConfig(args []string, lookupEnv func(string) (string, bool)) (config, e
 	auditFile := fs.String("audit-file", "", "путь к файлу аудита запросов (пусто - выключено)")
 	auditURL := fs.String("audit-url", "", "URL приёмника аудита запросов (пусто - выключено)")
 	trustedSubnet := fs.String("t", "", "CIDR доверенной подсети для приёма метрик (пусто - без ограничений)")
+	grpcAddr := fs.String("g", "", "адрес gRPC-сервера метрик (пусто - gRPC выключен)")
 	// -c и -config - один параметр под двумя именами.
 	cfgPath := fs.String("c", "", "путь к JSON-файлу конфигурации")
 	fs.StringVar(cfgPath, "config", "", "путь к JSON-файлу конфигурации")
@@ -67,6 +71,7 @@ func loadConfig(args []string, lookupEnv func(string) (string, bool)) (config, e
 		auditFile:       *auditFile,
 		auditURL:        *auditURL,
 		trustedSubnet:   *trustedSubnet,
+		grpcAddress:     *grpcAddr,
 	}
 
 	// Путь к конфигу: env CONFIG перекрывает флаг, как у остальных опций.
@@ -114,6 +119,9 @@ func loadConfig(args []string, lookupEnv func(string) (string, bool)) (config, e
 		if fc.TrustedSubnet != nil {
 			cfg.trustedSubnet = *fc.TrustedSubnet
 		}
+		if fc.GRPCAddress != nil {
+			cfg.grpcAddress = *fc.GRPCAddress
+		}
 	}
 
 	// Слой флагов: применяем только реально переданные - сравнение с дефолтом
@@ -152,6 +160,9 @@ func loadConfig(args []string, lookupEnv func(string) (string, bool)) (config, e
 	}
 	if visited["t"] {
 		cfg.trustedSubnet = *trustedSubnet
+	}
+	if visited["g"] {
+		cfg.grpcAddress = *grpcAddr
 	}
 
 	// Слой env: реально заданная переменная перекрывает всё остальное.
@@ -199,6 +210,9 @@ func loadConfig(args []string, lookupEnv func(string) (string, bool)) (config, e
 	}
 	if v, ok := lookupEnv("TRUSTED_SUBNET"); ok && v != "" {
 		cfg.trustedSubnet = v
+	}
+	if v, ok := lookupEnv("GRPC_ADDRESS"); ok && v != "" {
+		cfg.grpcAddress = v
 	}
 
 	return cfg, nil

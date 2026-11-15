@@ -21,6 +21,13 @@ import (
 // encryptedHeader - признак того, что тело запроса зашифровано (см. сервер).
 const encryptedHeader = "X-Content-Encrypted"
 
+// batchSender - контракт отправителя батчей: HTTP-sender и gRPC-sender
+// взаимозаменяемы для аккумулятора, воркеров и финального flush'а.
+type batchSender interface {
+	Send(ctx context.Context, metrics []models.Metrics) bool
+	SendOnce(ctx context.Context, metrics []models.Metrics) error
+}
+
 // sender сворачивает всё, что нужно для отправки батча: HTTP-клиент, адрес
 // сервера, ключ подписи, публичный ключ шифрования и политику повторов. Один
 // экземпляр делят воркеры и финальная отправка при shutdown.

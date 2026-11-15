@@ -1,5 +1,6 @@
 // Command agent - агент сбора метрик: периодически опрашивает runtime- и
-// системные метрики и батчами отправляет их на сервер по HTTP.
+// системные метрики и батчами отправляет их на сервер по HTTP, а при заданном
+// адресе gRPC-сервера (флаг -g) - по gRPC.
 package main
 
 import (
@@ -82,6 +83,15 @@ func main() {
 	// аккумулятора при shutdown (одна попытка без retry).
 	s := newSender(client, cfg.addr, cfg.key, cryptoKey, retry.DefaultPolicy())
 
+	// Задан gRPC-адрес - шлём метрики по gRPC вместо HTTP. Оба сендера
+	// реализуют batchSender, остальной конвейер про транспорт не знает.
+	var bs batchSender = s
+	if cfg.grpcAddress != "" {
+		grpcSnd := newGRPCSender(cfg.grpcAddress, retry.DefaultPolicy())
+		defer grpcSnd.Close()
+		bs = grpcSnd
+	}
+
 	// metricsCh - выход горутин A и B, вход аккумулятора. jobsCh/resultsCh -
 	// обвязка между аккумулятором и пулом воркеров. Буферы небольшие: достаточно
 	// сгладить всплеск в момент отправки батча, не более того - основное
@@ -110,7 +120,7 @@ func main() {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		runAccumulator(ctx, cfg.reportInterval, metricsCh, jobsCh, resultsCh, a, s)
+		runAccumulator(ctx, cfg.reportInterval, metricsCh, jobsCh, resultsCh, a, bs)
 	}()
 
 	// Пул воркеров: не более cfg.rateLimit одновременных исходящих запросов.
@@ -118,7 +128,7 @@ func main() {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			runWorker(ctx, jobsCh, resultsCh, s.Send)
+			runWorker(ctx, jobsCh, resultsCh, bs.Send)
 		}()
 	}
 

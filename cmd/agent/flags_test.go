@@ -32,7 +32,7 @@ func TestLoadConfig_Defaults(t *testing.T) {
 	}
 	if cfg.addr != "localhost:8080" || cfg.reportInterval != 10*time.Second ||
 		cfg.pollInterval != 2*time.Second || cfg.key != "" || cfg.cryptoKey != "" ||
-		cfg.rateLimit != 1 {
+		cfg.rateLimit != 1 || cfg.grpcAddress != "" {
 		t.Errorf("дефолты изменились: %+v", cfg)
 	}
 }
@@ -44,7 +44,8 @@ func TestLoadConfig_FileOnly(t *testing.T) {
 		"poll_interval": "300ms",
 		"key": "file-key",
 		"crypto_key": "/tmp/file.pem",
-		"rate_limit": 5
+		"rate_limit": 5,
+		"grpc_address": ":3200"
 	}`)
 
 	cfg, err := loadConfig([]string{"-c", path}, envFrom(nil))
@@ -54,9 +55,38 @@ func TestLoadConfig_FileOnly(t *testing.T) {
 
 	if cfg.addr != "10.0.0.1:9000" || cfg.reportInterval != time.Second ||
 		cfg.pollInterval != 300*time.Millisecond || cfg.key != "file-key" ||
-		cfg.cryptoKey != "/tmp/file.pem" || cfg.rateLimit != 5 {
+		cfg.cryptoKey != "/tmp/file.pem" || cfg.rateLimit != 5 ||
+		cfg.grpcAddress != ":3200" {
 		t.Errorf("значения из файла не применились: %+v", cfg)
 	}
+}
+
+// grpc_address собирается по тем же слоям: файл < флаг -g < env GRPC_ADDRESS.
+func TestLoadConfig_GRPCAddress(t *testing.T) {
+	fileJSON := `{"grpc_address": ":3200"}`
+
+	t.Run("флаг перекрывает файл", func(t *testing.T) {
+		path := writeConfig(t, fileJSON)
+		cfg, err := loadConfig([]string{"-c", path, "-g", ":3300"}, envFrom(nil))
+		if err != nil {
+			t.Fatalf("loadConfig: %v", err)
+		}
+		if cfg.grpcAddress != ":3300" {
+			t.Errorf("grpcAddress = %q, want :3300 (флаг)", cfg.grpcAddress)
+		}
+	})
+
+	t.Run("env перекрывает флаг и файл", func(t *testing.T) {
+		path := writeConfig(t, fileJSON)
+		cfg, err := loadConfig([]string{"-c", path, "-g", ":3300"},
+			envFrom(map[string]string{"GRPC_ADDRESS": ":3400"}))
+		if err != nil {
+			t.Fatalf("loadConfig: %v", err)
+		}
+		if cfg.grpcAddress != ":3400" {
+			t.Errorf("grpcAddress = %q, want :3400 (env)", cfg.grpcAddress)
+		}
+	})
 }
 
 func TestLoadConfig_Priority(t *testing.T) {

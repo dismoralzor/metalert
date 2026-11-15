@@ -9,5 +9,6 @@
   "crypto_key": "",
   "audit_file": "",
   "audit_url": "",
-  "trusted_subnet": ""
+  "trusted_subnet": "",
+  "grpc_address": ""
 }

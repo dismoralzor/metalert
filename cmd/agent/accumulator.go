@@ -48,7 +48,7 @@ func runAccumulator(
 	jobsCh chan<- job,
 	resultsCh <-chan sendResult,
 	a *agent,
-	s *sender,
+	s batchSender,
 ) {
 	defer close(jobsCh)
 
@@ -97,7 +97,7 @@ func runAccumulator(
 
 // flushFinal отправляет накопленное при остановке агента, если есть что
 // отправлять (pending непустой или pollCount > 0).
-func flushFinal(ctx context.Context, pending []models.Metrics, a *agent, s *sender) {
+func flushFinal(ctx context.Context, pending []models.Metrics, a *agent, s batchSender) {
 	delta := a.pollCount.Swap(0)
 	if len(pending) == 0 && delta == 0 {
 		return
@@ -111,7 +111,7 @@ func flushFinal(ctx context.Context, pending []models.Metrics, a *agent, s *send
 // sendBatchOnce делает одну попытку отправить батч без retry под собственным
 // коротким контекстом: переданный ctx уже отменён, поэтому использовать его
 // для сетевого вызова нельзя. Ошибку только логируем - процесс завершается.
-func sendBatchOnce(ctx context.Context, batch []models.Metrics, s *sender) {
+func sendBatchOnce(ctx context.Context, batch []models.Metrics, s batchSender) {
 	if s == nil {
 		return
 	}

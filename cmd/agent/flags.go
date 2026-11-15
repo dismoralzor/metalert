@@ -19,6 +19,8 @@ type config struct {
 	// rateLimit - число одновременных исходящих запросов (размер воркер-пула).
 	// Не путать с -l сервера (там это уровень логирования) - разные бинарники.
 	rateLimit int
+	// grpcAddress - адрес gRPC-сервера метрик. Пусто = отправка по HTTP.
+	grpcAddress string
 }
 
 // loadConfig собирает конфигурацию слоями по нарастанию приоритета:
@@ -35,6 +37,7 @@ func loadConfig(args []string, lookupEnv func(string) (string, bool)) (config, e
 	key := fs.String("k", "", "ключ для подписи запросов HashSHA256 (пусто - подпись выключена)")
 	cryptoKey := fs.String("crypto-key", "", "путь к файлу с публичным RSA-ключом (пусто - шифрование выключено)")
 	rateLimit := fs.Int("l", 1, "количество одновременных исходящих запросов")
+	grpcAddr := fs.String("g", "", "адрес gRPC-сервера метрик (пусто - отправка по HTTP)")
 	// -c и -config - один параметр под двумя именами.
 	cfgPath := fs.String("c", "", "путь к JSON-файлу конфигурации")
 	fs.StringVar(cfgPath, "config", "", "путь к JSON-файлу конфигурации")
@@ -50,6 +53,7 @@ func loadConfig(args []string, lookupEnv func(string) (string, bool)) (config, e
 		key:            *key,
 		cryptoKey:      *cryptoKey,
 		rateLimit:      *rateLimit,
+		grpcAddress:    *grpcAddr,
 	}
 
 	// Путь к конфигу: env CONFIG перекрывает флаг, как у остальных опций.
@@ -82,6 +86,9 @@ func loadConfig(args []string, lookupEnv func(string) (string, bool)) (config, e
 		if fc.RateLimit != nil {
 			cfg.rateLimit = *fc.RateLimit
 		}
+		if fc.GRPCAddress != nil {
+			cfg.grpcAddress = *fc.GRPCAddress
+		}
 	}
 
 	// Слой флагов: применяем только реально переданные - сравнение с дефолтом
@@ -106,6 +113,9 @@ func loadConfig(args []string, lookupEnv func(string) (string, bool)) (config, e
 	if visited["l"] {
 		cfg.rateLimit = *rateLimit
 	}
+	if visited["g"] {
+		cfg.grpcAddress = *grpcAddr
+	}
 
 	// Слой env: реально заданная переменная перекрывает всё остальное.
 	if v, ok := lookupEnv("ADDRESS"); ok && v != "" {
@@ -118,6 +128,9 @@ func loadConfig(args []string, lookupEnv func(string) (string, bool)) (config, e
 	}
 	if v, ok := lookupEnv("CRYPTO_KEY"); ok && v != "" {
 		cfg.cryptoKey = v
+	}
+	if v, ok := lookupEnv("GRPC_ADDRESS"); ok && v != "" {
+		cfg.grpcAddress = v
 	}
 	if raw, ok := lookupEnv("RATE_LIMIT"); ok && raw != "" {
 		n, err := strconv.Atoi(raw)

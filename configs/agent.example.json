@@ -4,5 +4,6 @@
   "poll_interval": "2s",
   "key": "",
   "crypto_key": "",
-  "rate_limit": 1
+  "rate_limit": 1,
+  "grpc_address": ""
 }

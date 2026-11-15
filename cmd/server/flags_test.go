@@ -33,7 +33,8 @@ func TestLoadConfig_Defaults(t *testing.T) {
 	if cfg.addr != "localhost:8080" || cfg.logLevel != "info" ||
 		cfg.storeInterval != 300*time.Second || cfg.fileStoragePath != "metrics.json" ||
 		!cfg.restore || cfg.dsn != "" || cfg.key != "" || cfg.cryptoKey != "" ||
-		cfg.auditFile != "" || cfg.auditURL != "" || cfg.trustedSubnet != "" {
+		cfg.auditFile != "" || cfg.auditURL != "" || cfg.trustedSubnet != "" ||
+		cfg.grpcAddress != "" {
 		t.Errorf("дефолты изменились: %+v", cfg)
 	}
 }
@@ -49,7 +50,8 @@ const fullServerJSON = `{
 	"crypto_key": "/tmp/file.pem",
 	"audit_file": "/tmp/audit.log",
 	"audit_url": "http://audit",
-	"trusted_subnet": "192.168.1.0/24"
+	"trusted_subnet": "192.168.1.0/24",
+	"grpc_address": ":3200"
 }`
 
 func TestLoadConfig_FileOnly(t *testing.T) {
@@ -64,7 +66,8 @@ func TestLoadConfig_FileOnly(t *testing.T) {
 		cfg.storeInterval != time.Second || cfg.fileStoragePath != "/tmp/from-file.db" ||
 		cfg.restore || cfg.dsn != "postgres://file" || cfg.key != "file-key" ||
 		cfg.cryptoKey != "/tmp/file.pem" || cfg.auditFile != "/tmp/audit.log" ||
-		cfg.auditURL != "http://audit" || cfg.trustedSubnet != "192.168.1.0/24" {
+		cfg.auditURL != "http://audit" || cfg.trustedSubnet != "192.168.1.0/24" ||
+		cfg.grpcAddress != ":3200" {
 		t.Errorf("значения из файла не применились: %+v", cfg)
 	}
 }
@@ -93,6 +96,34 @@ func TestLoadConfig_TrustedSubnet(t *testing.T) {
 		}
 		if cfg.trustedSubnet != "172.16.0.0/12" {
 			t.Errorf("trustedSubnet = %q, want 172.16.0.0/12 (env)", cfg.trustedSubnet)
+		}
+	})
+}
+
+// grpc_address собирается по тем же слоям: файл < флаг -g < env GRPC_ADDRESS.
+func TestLoadConfig_GRPCAddress(t *testing.T) {
+	fileJSON := `{"grpc_address": ":3200"}`
+
+	t.Run("флаг перекрывает файл", func(t *testing.T) {
+		path := writeConfig(t, fileJSON)
+		cfg, err := loadConfig([]string{"-c", path, "-g", ":3300"}, envFrom(nil))
+		if err != nil {
+			t.Fatalf("loadConfig: %v", err)
+		}
+		if cfg.grpcAddress != ":3300" {
+			t.Errorf("grpcAddress = %q, want :3300 (флаг)", cfg.grpcAddress)
+		}
+	})
+
+	t.Run("env перекрывает флаг и файл", func(t *testing.T) {
+		path := writeConfig(t, fileJSON)
+		cfg, err := loadConfig([]string{"-c", path, "-g", ":3300"},
+			envFrom(map[string]string{"GRPC_ADDRESS": ":3400"}))
+		if err != nil {
+			t.Fatalf("loadConfig: %v", err)
+		}
+		if cfg.grpcAddress != ":3400" {
+			t.Errorf("grpcAddress = %q, want :3400 (env)", cfg.grpcAddress)
 		}
 	})
 }

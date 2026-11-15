@@ -21,6 +21,7 @@ type ServerFile struct {
 	AuditFile     *string   `json:"audit_file"`
 	AuditURL      *string   `json:"audit_url"`
 	TrustedSubnet *string   `json:"trusted_subnet"`
+	GRPCAddress   *string   `json:"grpc_address"`
 }
 
 // AgentFile - конфигурация агента из JSON-файла. Семантика полей-указателей
@@ -32,6 +33,7 @@ type AgentFile struct {
 	Key            *string   `json:"key"`
 	CryptoKey      *string   `json:"crypto_key"`
 	RateLimit      *int      `json:"rate_limit"`
+	GRPCAddress    *string   `json:"grpc_address"`
 }
 
 // LoadJSON читает JSON-файл конфигурации path в структуру v. Неизвестные
