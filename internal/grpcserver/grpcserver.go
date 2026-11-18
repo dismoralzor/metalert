@@ -29,13 +29,17 @@ func NewMetricsServer(storage repository.Storage) *MetricsServer {
 	return &MetricsServer{storage: storage}
 }
 
-// UpdateMetrics принимает батч метрик и сохраняет его. Ошибка хранилища
-// уходит клиенту как codes.Internal - разбираться с ней стоит на сервере,
-// агенту достаточно знать, что батч не принят.
+// UpdateMetrics принимает батч метрик, валидирует и сохраняет его. Правила
+// валидации общие с HTTP-слоем (models.ValidateBatch); невалидный батч -
+// codes.InvalidArgument, ошибка хранилища - codes.Internal: разбираться с ней
+// стоит на сервере, агенту достаточно знать, что батч не принят.
 func (s *MetricsServer) UpdateMetrics(ctx context.Context, req *pb.UpdateMetricsRequest) (*pb.UpdateMetricsResponse, error) {
 	metrics := make([]models.Metrics, 0, len(req.GetMetrics()))
 	for _, m := range req.GetMetrics() {
 		metrics = append(metrics, fromProto(m))
+	}
+	if err := models.ValidateBatch(metrics); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid batch: %v", err)
 	}
 	if err := s.storage.UpdateBatch(ctx, metrics); err != nil {
 		return nil, status.Errorf(codes.Internal, "save metrics: %v", err)

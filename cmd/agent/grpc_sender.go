@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -14,6 +15,11 @@ import (
 	pb "github.com/dismoralzor/metalert/internal/proto"
 	"github.com/dismoralzor/metalert/internal/retry"
 )
+
+// rpcTimeout - дедлайн одной попытки UpdateMetrics. Без него RPC при зависшем
+// соединении мог бы заблокировать воркер на неопределённое время, и повторы
+// по политике не сработали бы. По величине соответствует таймауту HTTP-клиента.
+const rpcTimeout = 5 * time.Second
 
 // grpcSender - отправитель батчей по gRPC, альтернатива HTTP-sender'у.
 // Реализует тот же batchSender, поэтому аккумулятор и воркеры не замечают
@@ -65,7 +71,9 @@ func (s *grpcSender) SendOnce(ctx context.Context, metrics []models.Metrics) err
 }
 
 // send конвертирует батч в UpdateMetricsRequest и вызывает UpdateMetrics,
-// подкладывая IP агента в метаданные x-real-ip.
+// подкладывая IP агента в метаданные x-real-ip. Каждая попытка ограничена
+// дедлайном rpcTimeout (у финальной отправки при shutdown свой, более
+// короткий - он и сработает).
 func (s *grpcSender) send(ctx context.Context, policy retry.Policy, metrics []models.Metrics) error {
 	req := &pb.UpdateMetricsRequest{Metrics: make([]*pb.Metric, 0, len(metrics))}
 	for _, m := range metrics {
@@ -74,7 +82,9 @@ func (s *grpcSender) send(ctx context.Context, policy retry.Policy, metrics []mo
 
 	ctx = metadata.AppendToOutgoingContext(ctx, "x-real-ip", s.realIP)
 	return policy.Do(ctx, func() error {
-		_, err := s.client.UpdateMetrics(ctx, req)
+		callCtx, cancel := context.WithTimeout(ctx, rpcTimeout)
+		defer cancel()
+		_, err := s.client.UpdateMetrics(callCtx, req)
 		return err
 	}, isRetriableGRPC)
 }

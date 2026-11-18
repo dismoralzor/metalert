@@ -109,6 +109,37 @@ func TestTrustedSubnetInterceptor_NilSubnet(t *testing.T) {
 	}
 }
 
+// Валидация батча общая с HTTP-слоем: пустой и невалидный батчи отклоняются
+// с codes.InvalidArgument, а не сохраняются.
+func TestUpdateMetrics_InvalidBatch(t *testing.T) {
+	tests := []struct {
+		name string
+		req  *pb.UpdateMetricsRequest
+	}{
+		{"пустой батч", &pb.UpdateMetricsRequest{}},
+		{"без id", &pb.UpdateMetricsRequest{Metrics: []*pb.Metric{
+			{Type: pb.Metric_GAUGE, Value: 1},
+		}}},
+		{"неизвестный тип", &pb.UpdateMetricsRequest{Metrics: []*pb.Metric{
+			{Id: "X", Type: pb.Metric_MType(42)},
+		}}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client, storage := startTestServer(t, nil)
+			_, err := client.UpdateMetrics(context.Background(), tt.req)
+			if code := status.Code(err); code != codes.InvalidArgument {
+				t.Fatalf("код = %v, ожидался InvalidArgument (err = %v)", code, err)
+			}
+			// Ничего не должно было сохраниться.
+			if _, ok := storage.GetGauge(context.Background(), "X"); ok {
+				t.Fatal("невалидная метрика сохранилась")
+			}
+		})
+	}
+}
+
 func TestFromProto(t *testing.T) {
 	gauge := fromProto(&pb.Metric{Id: "G", Type: pb.Metric_GAUGE, Value: 1.5})
 	if gauge.MType != "gauge" || gauge.Value == nil || *gauge.Value != 1.5 || gauge.Delta != nil {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -108,5 +109,54 @@ func TestGRPCSender_Send(t *testing.T) {
 	s.realIP = "10.0.0.1"
 	if s.Send(context.Background(), batch) {
 		t.Fatal("Send с чужим IP вернул true, ожидался PermissionDenied")
+	}
+}
+
+// hangingMetricsServer - сервис, чей UpdateMetrics висит, пока клиент не
+// отменит вызов: нужен для проверки дедлайна на стороне сендера.
+type hangingMetricsServer struct {
+	pb.UnimplementedMetricsServer
+}
+
+func (h *hangingMetricsServer) UpdateMetrics(ctx context.Context, _ *pb.UpdateMetricsRequest) (*pb.UpdateMetricsResponse, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+// TestGRPCSender_Deadline: без дедлайна зависший RPC блокировал бы воркер
+// навсегда - с дедлайном SendOnce возвращает DeadlineExceeded за rpcTimeout.
+func TestGRPCSender_Deadline(t *testing.T) {
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	srv := grpc.NewServer()
+	pb.RegisterMetricsServer(srv, &hangingMetricsServer{})
+	go func() {
+		_ = srv.Serve(lis)
+	}()
+	t.Cleanup(srv.Stop)
+
+	conn, err := grpc.NewClient(lis.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("grpc client: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+
+	s := &grpcSender{conn: conn, client: pb.NewMetricsClient(conn), realIP: "127.0.0.1"}
+
+	v := 1.5
+	batch := []models.Metrics{{ID: "G", MType: models.Gauge, Value: &v}}
+
+	start := time.Now()
+	err = s.SendOnce(context.Background(), batch)
+	elapsed := time.Since(start)
+
+	if status.Code(err) != codes.DeadlineExceeded {
+		t.Fatalf("err = %v, ожидался DeadlineExceeded", err)
+	}
+	// Грубые рамки: не раньше дедлайна и не "навсегда" (с запасом на CI).
+	if elapsed < rpcTimeout || elapsed > rpcTimeout+3*time.Second {
+		t.Fatalf("дедлайн сработал за %v, ожидалось около %v", elapsed, rpcTimeout)
 	}
 }
